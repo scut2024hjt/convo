@@ -1,0 +1,40 @@
+app:
+  name: "convo"
+  mode: "dev"
+  port: 9090
+
+auth:
+  jwt_expire: 8760
+
+log:
+  level: "debug"
+  filename: "convo.log"
+  max_size: 200
+  max_age: 30
+  max_backups: 7
+
+mysql:
+  host: 127.0.0.1
+  port: 33306
+  user: "root"
+  password: "123"
+  db: "convo"
+  max_open_connection: 100
+  max_idle_connection: 500
+
+redis:
+  host: 127.0.0.1
+  port: 36379
+  password: ""
+  db: 0
+  pool_size: 100
+
+snowflake:
+  start_time: "2020-07-01"
+  machine_id: 1
+
+encrypt:
+  secret_key: "change-me-in-production"
+
+gin:
+  mode: "debug"
