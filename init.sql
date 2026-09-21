@@ -18,7 +18,7 @@ CREATE TABLE `user` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- create table
-DROP TABLE IF EXISTS `communtiy`;
+DROP TABLE IF EXISTS `community`;
 CREATE TABLE `community` (
                              `id` int(11) NOT NULL AUTO_INCREMENT,
                              `community_id` int(10) unsigned NOT NULL,
