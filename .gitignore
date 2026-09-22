@@ -111,3 +111,7 @@ go.work
 /Godeps/
 
 *.log
+
+# 本机特定的 compose 覆盖（5672 被 Windows 保留端口段占用，改映射到 35672）
+# Docker Compose 会自动加载，见 README
+docker-compose.override.yaml
