@@ -1,10 +1,13 @@
 package middlewares
 
 import (
-	"github.com/scut2024hjt/convo/controller"
-	"github.com/scut2024hjt/convo/pkg/jwt"
-	"github.com/gin-gonic/gin"
+	"strconv"
 	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/scut2024hjt/convo/controller"
+	redisdao "github.com/scut2024hjt/convo/dao/redis"
+	"github.com/scut2024hjt/convo/pkg/jwt"
 )
 
 // JWTAuthMiddleware 基于 JWT 的认证中间件
@@ -33,8 +36,26 @@ func JWTAuthMiddleware() func(c *gin.Context) {
 			c.Abort()
 			return
 		}
+		userID, err := strconv.ParseInt(mc.Subject, 10, 64)
+		if err != nil || mc.SessionID == "" {
+			controller.ResponseError(c, controller.CodeValidToken)
+			c.Abort()
+			return
+		}
+		valid, err := redisdao.ValidateSession(userID, mc.SessionID)
+		if err != nil {
+			controller.ResponseError(c, controller.CodeAuthUnavailable)
+			c.Abort()
+			return
+		}
+		if !valid {
+			controller.ResponseError(c, controller.CodeValidToken)
+			c.Abort()
+			return
+		}
 		// 将当前请求的 userID 信息保存到请求的上下文 c 上
-		c.Set(controller.CtxtUserIDKey, mc.UserID)
+		c.Set(controller.CtxtUserIDKey, userID)
+		c.Set(controller.CtxtSessionIDKey, mc.SessionID)
 		c.Next() // 后续处理请求函数可以用 c.Get("username") 来获取当前请求的用户信息
 	}
 }

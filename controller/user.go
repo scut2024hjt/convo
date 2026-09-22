@@ -1,13 +1,15 @@
 package controller
 
 import (
+	"errors"
+	"fmt"
+
+	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/scut2024hjt/convo/dao/mysql"
 	"github.com/scut2024hjt/convo/logic"
 	"github.com/scut2024hjt/convo/models"
-	"errors"
-	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
+	"github.com/scut2024hjt/convo/pkg/encrypt"
 	"go.uber.org/zap"
 )
 
@@ -45,12 +47,15 @@ func SignUpHandler(c *gin.Context) {
 	//	})
 	//	return
 	//}
-	fmt.Printf("user: %#v\n", *p)
 	// 2. 业务处理
 	if err := logic.SignUp(p); err != nil {
 		// 记录错误日志
 		if errors.Is(err, mysql.ErrorUserExist) {
 			ResponseError(c, CodeUserExist)
+			return
+		}
+		if errors.Is(err, encrypt.ErrPasswordTooLong) {
+			ResponseError(c, CodeInvalidPassword)
 			return
 		}
 		ResponseError(c, CodeServerBusy)
@@ -92,11 +97,11 @@ func LoginHandler(c *gin.Context) {
 		// 记录错误日志
 		zap.L().Error("Logic.Login failed", zap.String("username", p.Username), zap.Error(err))
 		//
-		if errors.Is(err, mysql.ErrorUserNotExist) {
-			ResponseError(c, CodeUserNotExist)
+		if errors.Is(err, mysql.ErrorUserNotExist) || errors.Is(err, mysql.ErrorInvalidPassword) {
+			ResponseError(c, CodeInvalidPassword)
 			return
 		}
-		ResponseError(c, CodeInvalidPassword)
+		ResponseError(c, CodeServerBusy)
 		return
 	}
 	// 3. 返回响应
@@ -105,4 +110,31 @@ func LoginHandler(c *gin.Context) {
 		"username": user.Username,
 		"token":    user.Token,
 	})
+}
+
+// LogoutHandler 仅删除当前 JWT 对应的 session，不会误删后来登录的新 session。
+// @Summary 退出登录接口
+// @Tags 用户相关接口
+// @Produce application/json
+// @Param Authorization header string true "Bearer 用户令牌"
+// @Security ApiKeyAuth
+// @Success 200 {object} ResponseData
+// @Router /logout [post]
+func LogoutHandler(c *gin.Context) {
+	userID, err := getCurrentUserID(c)
+	if err != nil {
+		ResponseError(c, CodeNeedLogin)
+		return
+	}
+	sessionID, err := getCurrentSessionID(c)
+	if err != nil {
+		ResponseError(c, CodeValidToken)
+		return
+	}
+	if err := logic.Logout(userID, sessionID); err != nil {
+		zap.L().Error("logic.Logout failed", zap.Error(err))
+		ResponseError(c, CodeServerBusy)
+		return
+	}
+	ResponseSuccess(c, nil)
 }

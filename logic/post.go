@@ -1,19 +1,26 @@
 package logic
 
 import (
+	"database/sql"
+	"errors"
+	"strconv"
+	"time"
+
 	"github.com/scut2024hjt/convo/dao/mysql"
 	"github.com/scut2024hjt/convo/dao/redis"
 	"github.com/scut2024hjt/convo/models"
 	"github.com/scut2024hjt/convo/pkg/snowflake"
-
-	"strconv"
-
-	// "github.com/golang/groupcache/singleflight"
+	"github.com/scut2024hjt/convo/settings"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
 var sgPostList singleflight.Group
+
+var (
+	ErrPostNotFound = errors.New("post not found")
+	ErrForbidden    = errors.New("post can only be edited by its author")
+)
 
 func CreatePost(p *models.Post) (err error) {
 	// 1. 生成 post_id
@@ -29,30 +36,80 @@ func CreatePost(p *models.Post) (err error) {
 
 // GetPostById 根据帖子 id 查询帖子详情数据
 func GetPostById(pid int64) (data *models.ApiPostDetail, err error) {
-	// 查询并组合我们接口想用的数据
-	post, err := mysql.GetPostById(pid)
+	cached, err := redis.GetPostDetailCache(pid)
+	if err == redis.Nil {
+		data, err = mysql.GetPostDetailByID(pid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPostNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+		ttl := time.Duration(settings.Conf.CacheConfig.PostDetailTTLSeconds) * time.Second
+		cached = &models.CachedPostDetail{
+			AuthorName: data.AuthorName, Post: data.Post, CommunityDetail: data.CommunityDetail,
+		}
+		if cacheErr := redis.SetPostDetailCache(pid, cached, ttl); cacheErr != nil {
+			zap.L().Warn("set post detail cache failed", zap.Int64("post_id", pid), zap.Error(cacheErr))
+		}
+	} else if err != nil {
+		zap.L().Warn("get post detail cache failed; falling back to mysql", zap.Int64("post_id", pid), zap.Error(err))
+		data, err = mysql.GetPostDetailByID(pid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPostNotFound
+		}
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		data = &models.ApiPostDetail{
+			AuthorName: cached.AuthorName, Post: cached.Post, CommunityDetail: cached.CommunityDetail,
+		}
+	}
+
+	// VoteNum is dynamic and therefore is not trusted from the detail cache.
+	voteCount, voteErr := redis.GetPostVoteCount(pid)
+	if voteErr != nil {
+		zap.L().Warn("get vote count from redis failed; falling back to mysql", zap.Int64("post_id", pid), zap.Error(voteErr))
+		voteCount, voteErr = mysql.CountPostUpVotes(pid)
+		if voteErr != nil {
+			return nil, voteErr
+		}
+	}
+	data.VoteNum = voteCount
+	return data, nil
+}
+
+func UpdatePost(postID, authorID int64, params *models.ParamsUpdatePost) error {
+	updated, err := mysql.UpdatePost(postID, authorID, params.Title, params.Content)
 	if err != nil {
-		zap.L().Error("mysql.GetPostById(pid) failed", zap.Error(err))
-		return
+		return err
 	}
-	// 根据作者 id 查询作者信息
-	user, err := mysql.GetUserById(post.AuthorID)
-	if err != nil {
-		zap.L().Error("mysql.GetUserById(post.AuthorID) failed", zap.Error(err))
-		return
+	if !updated {
+		ownerID, ownerErr := mysql.GetPostAuthorID(postID)
+		if errors.Is(ownerErr, sql.ErrNoRows) {
+			return ErrPostNotFound
+		}
+		if ownerErr != nil {
+			return ownerErr
+		}
+		if ownerID != authorID {
+			return ErrForbidden
+		}
+		// The submitted content is identical to the stored content.
+		return nil
 	}
-	// 根据社区 id 查询社区详细信息
-	community, err := mysql.GetCommunityDetailByID(post.CommunityID)
-	if err != nil {
-		zap.L().Error("mysql.GetCommunityDetailByID(post.CommunityID) failed", zap.Error(err))
-		return
+
+	if err = redis.DeletePostDetailCache(postID); err != nil {
+		zap.L().Warn("delete post cache after update failed", zap.Int64("post_id", postID), zap.Error(err))
 	}
-	data = &models.ApiPostDetail{
-		AuthorName:      user.Username,
-		Post:            post,
-		CommunityDetail: community,
-	}
-	return
+	delay := time.Duration(settings.Conf.CacheConfig.DelayedDeleteMilliseconds) * time.Millisecond
+	time.AfterFunc(delay, func() {
+		if deleteErr := redis.DeletePostDetailCache(postID); deleteErr != nil {
+			zap.L().Warn("delayed post cache delete failed", zap.Int64("post_id", postID), zap.Error(deleteErr))
+		}
+	})
+	return nil
 }
 
 // GetPostList 获取帖子列表

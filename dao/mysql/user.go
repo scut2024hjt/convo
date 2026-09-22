@@ -1,11 +1,11 @@
 package mysql
 
 import (
-	"github.com/scut2024hjt/convo/models"
-	"github.com/scut2024hjt/convo/pkg/encrypt"
 	"database/sql"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/scut2024hjt/convo/models"
+	"github.com/scut2024hjt/convo/pkg/encrypt"
 )
 
 // CheckUserExit 把每一步数据库操作封装成函数
@@ -43,8 +43,7 @@ func Login(user *models.User) (err error) {
 		return err
 	}
 	// 判断密码是否正确
-	password := encrypt.EncryptPassword(opassword)
-	if password != user.Password {
+	if err := encrypt.ComparePassword(user.Password, opassword); err != nil {
 		return ErrorInvalidPassword
 	}
 	return

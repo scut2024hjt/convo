@@ -1,17 +1,16 @@
 package router
 
 import (
+	"net/http"
+	"runtime"
+
+	"github.com/gin-contrib/pprof"
+	"github.com/gin-gonic/gin"
 	"github.com/scut2024hjt/convo/controller"
 	_ "github.com/scut2024hjt/convo/docs" // 千万不要忘了导入上一步生成的docs
 	"github.com/scut2024hjt/convo/logger"
 	"github.com/scut2024hjt/convo/middlewares"
 	"github.com/scut2024hjt/convo/settings"
-	"net/http"
-	"runtime"
-	"time"
-
-	"github.com/gin-contrib/pprof"
-	"github.com/gin-gonic/gin"
 	gs "github.com/swaggo/gin-swagger"
 	"github.com/swaggo/gin-swagger/swaggerFiles"
 )
@@ -47,10 +46,12 @@ func Setup() *gin.Engine {
 		v1.GET("/posts2", controller.GetPostListTwoHandler)
 	}
 
-	v1.Use(middlewares.JWTAuthMiddleware(), middlewares.RateLimitMiddleware(2*time.Second, 1)) // 应用 JWT 认证中间件以及令牌桶限流中间件
+	v1.Use(middlewares.JWTAuthMiddleware())
 	{
 		v1.POST("/post", controller.CreatePostHandler)
+		v1.PUT("/post/:id", controller.UpdatePostHandler)
 		v1.POST("/vote", controller.PostVoteHandler)
+		v1.POST("/logout", controller.LogoutHandler)
 	}
 	runtime.SetBlockProfileRate(1)
 	pprof.Register(r) // 注册 pprof 相关路由

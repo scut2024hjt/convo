@@ -1,93 +1,97 @@
 package redis
 
 import (
+	_ "embed"
 	"errors"
-	"github.com/go-redis/redis"
-	"math"
+	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/go-redis/redis"
+	"github.com/scut2024hjt/convo/models"
 )
-
-/*
-	投票的几种情况：
-		direction=1 时，有两种情况：
-			1. 之前没有投过票，现在投赞成票 --> 更新分数和投票记录 --> 差值的绝对值为 1
-			2. 之前投反对票，现在改投赞成票 --> 更新分数和投票记录 --> 差值的绝对值为 2
-		direction=0 时，有两种情况：
-			1. 之前投反对票，现在要取消投票 --> 更新分数和投票记录 --> 差值的绝对值为 1
-			2. 之前投赞成票，现在要取消投票 --> 更新分数和投票记录 --> 差值的绝对值为 1
-		direction=-1 时，有两种情况：
-			1. 之前没有投过票，现在投反对票 --> 更新分数和投票记录 --> 差值的绝对值为 1
-			2. 之前投赞成票，现在改投反对票 --> 更新分数和投票记录 --> 差值的绝对值为 2
-
-投票的限制：
-	每个帖子自发表之日起一个星期内允许用户投票，超过一个星期就不允许再投票了。
-		1. 到期之后将 redis 中保存的赞成票数及反对票数存储到 mysql 表中
-		2. 到期之后删除那个 KeyPostScoreZSetPrefix
-*/
 
 const (
 	oneWeekInSeconds = 7 * 24 * 3600
-	scorePerVote     = 432 // 每一票多少分
+	scorePerVote     = 432
 )
 
 var (
-	ErrorVoteTimeExpire = errors.New("投票时间已过")
-	ErrorVoteRepeated   = errors.New("不允许重复投票")
+	ErrVoteTimeExpired    = errors.New("vote time expired")
+	ErrPostNotInitialized = errors.New("post is not initialized in redis")
+	ErrInvalidDirection   = errors.New("invalid vote direction")
+	ErrVoteKeyType        = errors.New("unexpected redis key type")
 )
 
-func CreatePost(postID, communityID int64) (err error) {
+//go:embed vote.lua
+var voteLua string
+
+var voteScript = redis.NewScript(voteLua)
+
+func CreatePost(postID, communityID int64) error {
 	pipeline := client.TxPipeline()
-	// 帖子时间
-	pipeline.ZAdd(getRedisKey(KeyPostTimeZSet), redis.Z{
-		Score:  float64(time.Now().Unix()),
-		Member: postID,
-	})
-	// 帖子分数
-	pipeline.ZAdd(getRedisKey(KeyPostScoreZSet), redis.Z{
-		Score:  float64(time.Now().Unix()),
-		Member: postID,
-	})
-	// 把帖子 id 加到社区的 set
-	cKey := getRedisKey(KeyCommentZSetPrefix + strconv.Itoa(int(communityID)))
-	pipeline.SAdd(cKey, postID)
-	_, err = pipeline.Exec()
-	return
+	now := float64(time.Now().Unix())
+	pipeline.ZAdd(getRedisKey(KeyPostTimeZSet), redis.Z{Score: now, Member: postID})
+	pipeline.ZAdd(getRedisKey(KeyPostScoreZSet), redis.Z{Score: now, Member: postID})
+	pipeline.SAdd(getRedisKey(KeyCommentZSetPrefix+strconv.FormatInt(communityID, 10)), postID)
+	_, err := pipeline.Exec()
+	return err
 }
 
-func VoteForPost(userID, postID string, value float64) (err error) {
-	// 1. 判断投票的限制
-	// 去 redis 取帖子发布时间
-	postTime := client.ZScore(getRedisKey(KeyPostTimeZSet), postID).Val()
-	if float64(time.Now().Unix())-postTime > oneWeekInSeconds {
-		return ErrorVoteTimeExpire
+func VoteForPost(userID, postID string, direction int8, eventID string, occurredAt int64) (*models.VoteResult, error) {
+	keys := []string{
+		getRedisKey(KeyPostTimeZSet),
+		getRedisKey(KeyPostScoreZSet),
+		getRedisKey(KeyPostVotedZSetPrefix + postID),
+		getRedisKey(KeyPostVoteVersionPrefix + postID),
+		getRedisKey(KeyVoteOutboxStream),
 	}
-	// 2. 更新帖子的分数
-	// 2 和 3 需要放到一个 pipeline 事务中操作
-	// 先查当前用户给当前帖子的投票记录
-	ov := client.ZScore(getRedisKey(KeyPostVotedZSetPrefix+postID), userID).Val()
-	// 如果这一次投票的值和之前保存的值一致，就提示不允许重复投票
-	if value == ov {
-		return ErrorVoteRepeated
+	result, err := voteScript.Run(client, keys,
+		postID, userID, direction, eventID, occurredAt,
+		oneWeekInSeconds, scorePerVote, models.VoteChangedEventType,
+	).Result()
+	if err != nil {
+		return nil, err
 	}
-	var op float64
-	if value > ov {
-		op = 1
-	} else {
-		op = -1
+	values, ok := result.([]interface{})
+	if !ok || len(values) < 6 {
+		return nil, fmt.Errorf("unexpected vote script result: %#v", result)
 	}
-	diff := math.Abs(ov - value) // 计算两次投票的差值
-	pipeline := client.TxPipeline()
-	pipeline.ZIncrBy(getRedisKey(KeyPostScoreZSet), op*diff*scorePerVote, postID)
-	// 3. 记录用户为该帖子投票的分数
-	if value == 0 {
-		pipeline.ZRem(getRedisKey(KeyPostVotedZSetPrefix+postID), userID)
-	} else {
-		pipeline.ZAdd(getRedisKey(KeyPostVotedZSetPrefix+postID), redis.Z{
-			Score:  value, // 赞成票还是反对票
-			Member: userID,
-		})
+	code, err := redisInt64(values[0])
+	if err != nil {
+		return nil, err
 	}
-	_, err = pipeline.Exec()
-	return
+	version, err := redisInt64(values[4])
+	if err != nil {
+		return nil, err
+	}
+	switch code {
+	case 0:
+		return &models.VoteResult{Direction: direction, Version: version, Changed: true}, nil
+	case 1:
+		return nil, ErrVoteTimeExpired
+	case 2:
+		return &models.VoteResult{Direction: direction, Version: version, Changed: false}, nil
+	case 3:
+		return nil, ErrPostNotInitialized
+	case 4:
+		return nil, ErrInvalidDirection
+	case 5:
+		return nil, ErrVoteKeyType
+	default:
+		return nil, fmt.Errorf("unknown vote script code: %d", code)
+	}
+}
+
+func redisInt64(value interface{}) (int64, error) {
+	switch v := value.(type) {
+	case int64:
+		return v, nil
+	case string:
+		return strconv.ParseInt(v, 10, 64)
+	case []byte:
+		return strconv.ParseInt(string(v), 10, 64)
+	default:
+		return 0, fmt.Errorf("unexpected redis integer type %T", value)
+	}
 }

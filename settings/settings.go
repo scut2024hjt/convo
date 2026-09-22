@@ -2,7 +2,8 @@ package settings
 
 import (
 	"fmt"
-	"github.com/fsnotify/fsnotify"
+	"strings"
+
 	"github.com/spf13/viper"
 )
 
@@ -15,9 +16,10 @@ type Config struct {
 	*MySQLConfig     `mapstructure:"mysql"`
 	*RedisConfig     `mapstructure:"redis"`
 	*SnowFlakeConfig `mapstructure:"snowflake"`
-	*EncryptConfig   `mapstructure:"encrypt"`
 	*GinConfig       `mapstructure:"gin"`
 	*AuthConfig      `mapstructure:"auth"`
+	*RabbitMQConfig  `mapstructure:"rabbitmq"`
+	*CacheConfig     `mapstructure:"cache"`
 }
 
 type AppConfig struct {
@@ -58,21 +60,50 @@ type SnowFlakeConfig struct {
 	MachineId int64  `mapstructure:"machine_id"`
 }
 
-type EncryptConfig struct {
-	SecretKey string `mapstructure:"secret_key"`
-}
-
 type GinConfig struct {
 	Mode string `mapstructure:"mode"`
 }
 
 type AuthConfig struct {
-	JwtExpire int `mapstructure:"jwt_expire"`
+	JwtExpire int    `mapstructure:"jwt_expire"`
+	JwtSecret string `mapstructure:"jwt_secret"`
+}
+
+type RabbitMQConfig struct {
+	URL                          string `mapstructure:"url"`
+	Exchange                     string `mapstructure:"exchange"`
+	VoteQueue                    string `mapstructure:"vote_queue"`
+	PublishConfirmTimeoutSeconds int    `mapstructure:"publish_confirm_timeout_seconds"`
+	ConsumerPrefetch             int    `mapstructure:"consumer_prefetch"`
+	MaxRetries                   int    `mapstructure:"max_retries"`
+	RetryDelayMilliseconds       int    `mapstructure:"retry_delay_milliseconds"`
+}
+
+type CacheConfig struct {
+	PostDetailTTLSeconds      int `mapstructure:"post_detail_ttl_seconds"`
+	DelayedDeleteMilliseconds int `mapstructure:"delayed_delete_milliseconds"`
 }
 
 func Init() (err error) {
 	viper.SetConfigName("config") // 指定配置文件名称（不需要带后缀）
 	viper.SetConfigType("yaml")   // 指定配置文件类型
+	viper.SetEnvPrefix("CONVO")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+	for _, key := range []string{
+		"app.mode", "app.port",
+		"mysql.host", "mysql.port", "mysql.user", "mysql.password", "mysql.db",
+		"redis.host", "redis.port", "redis.password", "redis.db",
+		"rabbitmq.url", "rabbitmq.exchange", "rabbitmq.vote_queue",
+		"rabbitmq.publish_confirm_timeout_seconds", "rabbitmq.consumer_prefetch",
+		"rabbitmq.max_retries", "rabbitmq.retry_delay_milliseconds",
+		"auth.jwt_secret", "auth.jwt_expire", "snowflake.machine_id",
+		"cache.post_detail_ttl_seconds", "cache.delayed_delete_milliseconds",
+	} {
+		if bindErr := viper.BindEnv(key); bindErr != nil {
+			return bindErr
+		}
+	}
 	//viper.AddConfigPath(".")      // 指定查找配置文件的路径（这里使用相对路径）
 	viper.AddConfigPath("./conf/")
 	err = viper.ReadInConfig() // 读取配置信息
@@ -83,14 +114,35 @@ func Init() (err error) {
 	}
 	// 把读取到的信息反序列化到 Conf 变量中
 	if err := viper.Unmarshal(Conf); err != nil {
-		fmt.Printf("viper.Unmarshal() failed, err: %v\n", err)
+		return fmt.Errorf("unmarshal config: %w", err)
 	}
-	viper.WatchConfig()
-	viper.OnConfigChange(func(in fsnotify.Event) {
-		fmt.Println("Configure file changed ...")
-		if err := viper.Unmarshal(Conf); err != nil {
-			fmt.Printf("viper.Unmarshal() failed, err: %v\n", err)
-		}
-	})
-	return
+	return Conf.Validate()
+}
+
+func (config *Config) Validate() error {
+	if config.AppConfig == nil || config.MySQLConfig == nil || config.RedisConfig == nil ||
+		config.SnowFlakeConfig == nil || config.GinConfig == nil || config.LogConfig == nil ||
+		config.AuthConfig == nil || config.RabbitMQConfig == nil || config.CacheConfig == nil {
+		return fmt.Errorf("required config section is missing")
+	}
+	if config.JwtExpire <= 0 || strings.TrimSpace(config.JwtSecret) == "" {
+		return fmt.Errorf("auth.jwt_expire and auth.jwt_secret must be configured")
+	}
+	if strings.EqualFold(config.AppConfig.Mode, "prod") && config.JwtSecret == "change-me-in-production" {
+		return fmt.Errorf("auth.jwt_secret must be supplied for production")
+	}
+	if config.MachineId < 0 || config.MachineId > 1023 {
+		return fmt.Errorf("snowflake.machine_id must be between 0 and 1023")
+	}
+	if config.RabbitMQConfig.URL == "" || config.RabbitMQConfig.Exchange == "" || config.RabbitMQConfig.VoteQueue == "" {
+		return fmt.Errorf("rabbitmq url, exchange and vote_queue must be configured")
+	}
+	if config.PublishConfirmTimeoutSeconds <= 0 || config.ConsumerPrefetch <= 0 ||
+		config.MaxRetries < 0 || config.RetryDelayMilliseconds <= 0 {
+		return fmt.Errorf("rabbitmq retry, prefetch and confirm settings are invalid")
+	}
+	if config.PostDetailTTLSeconds <= 0 || config.DelayedDeleteMilliseconds < 0 {
+		return fmt.Errorf("cache ttl and delayed delete settings are invalid")
+	}
+	return nil
 }

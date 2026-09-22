@@ -1,35 +1,40 @@
+//go:build integration
+// +build integration
+
 package mysql
 
 import (
+	"testing"
+	"time"
+
 	"github.com/scut2024hjt/convo/models"
 	"github.com/scut2024hjt/convo/settings"
-	"testing"
 )
 
-func init() {
+func TestCreatePost(t *testing.T) {
 	dbConfig := settings.MySQLConfig{ // 测试的数据库
 		Host:              "127.0.0.1",
 		User:              "root",
-		Password:          "root1234",
+		Password:          "123456",
 		DB:                "convo",
+		Port:              33306,
 		MaxOpenConnection: 10,
 		MaxIdleConnection: 10,
 	}
 	err := Init(&dbConfig)
 	if err != nil {
-		panic(err)
+		t.Skipf("mysql integration service is unavailable: %v", err)
 	}
-}
-
-func TestCreatePost(t *testing.T) {
+	defer Close()
 	p := &models.Post{
-		ID:          10,
+		ID:          time.Now().UnixNano(),
 		AuthorID:    123,
 		CommunityID: 1,
 		Title:       "test",
 		Content:     "just a test",
 	}
-	err := CreatePost(p)
+	defer func() { _, _ = db.Exec(`DELETE FROM post WHERE post_id = ?`, p.ID) }()
+	err = CreatePost(p)
 	if err != nil {
 		t.Fatalf("CreatePost insert record into mysql failed, err: %v\n", err)
 	}

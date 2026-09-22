@@ -1,9 +1,10 @@
 package redis
 
 import (
-	"github.com/scut2024hjt/convo/settings"
 	"fmt"
+
 	"github.com/go-redis/redis"
+	"github.com/scut2024hjt/convo/settings"
 	"go.uber.org/zap"
 )
 

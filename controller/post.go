@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"errors"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
 	"github.com/scut2024hjt/convo/logic"
 	"github.com/scut2024hjt/convo/models"
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	"strconv"
 )
 
 // CreatePostHandler 创建帖子
@@ -14,15 +16,15 @@ import (
 // @Tags 帖子相关接口
 // @Accept application/json
 // @Produce application/json
-// @Param Authorization header string false "Bearer 用户令牌"
-// @Param object body models.Post false "创建帖子参数"
+// @Param Authorization header string true "Bearer 用户令牌"
+// @Param object body models.ParamsCreatePost true "创建帖子参数"
 // @Security ApiKeyAuth
 // @Success 200 {object} ResponseData
 // @Router /post [post]
 func CreatePostHandler(c *gin.Context) {
 	// 1. 获取参数及参数校验
-	p := new(models.Post)
-	if err := c.ShouldBindJSON(&p); err != nil {
+	params := new(models.ParamsCreatePost)
+	if err := c.ShouldBindJSON(params); err != nil {
 		zap.L().Debug("c.ShouldBindJSON(&p) error", zap.Any("err", err))
 		zap.L().Error("create post with in invalid param", zap.Error(err))
 		ResponseError(c, CodeInvalidParam)
@@ -34,14 +36,18 @@ func CreatePostHandler(c *gin.Context) {
 		ResponseError(c, CodeNeedLogin)
 		return
 	}
-	p.AuthorID = userID
+	p := &models.Post{
+		AuthorID: userID, CommunityID: params.CommunityID,
+		Title: params.Title, Content: params.Content,
+	}
 	// 2. 创建帖子
 	if err := logic.CreatePost(p); err != nil {
 		zap.L().Error("logic.CreatePost failed", zap.Error(err))
 		ResponseError(c, CodeServerBusy)
+		return
 	}
 	// 3. 返回响应
-	ResponseSuccess(c, nil)
+	ResponseSuccess(c, gin.H{"post_id": strconv.FormatInt(p.ID, 10)})
 }
 
 // GetPostDetailHandler 获取帖子详情的处理函数
@@ -50,16 +56,14 @@ func CreatePostHandler(c *gin.Context) {
 // @Tags 帖子相关接口
 // @Accept application/json
 // @Produce application/json
-// @Param Authorization header string false "Bearer 用户令牌"
-// @Param id query string false "帖子 id 参数"
-// @Security ApiKeyAuth
+// @Param id path string true "帖子 id 参数"
 // @Success 200 {object} _ResponsePostList
-// @Router /post/:id [get]
+// @Router /post/{id} [get]
 func GetPostDetailHandler(c *gin.Context) {
 	// 1. 获取参数以及参数校验(帖子的 id)
 	pidStr := c.Param("id")
 	pid, err := strconv.ParseInt(pidStr, 10, 64)
-	if err != nil {
+	if err != nil || pid <= 0 {
 		zap.L().Error("get post detail with invalid param", zap.Error(err))
 		ResponseError(c, CodeInvalidParam)
 		return
@@ -68,11 +72,57 @@ func GetPostDetailHandler(c *gin.Context) {
 	data, err := logic.GetPostById(pid)
 	if err != nil {
 		zap.L().Error("logic.GetPostById(pid) failed", zap.Error(err))
+		if errors.Is(err, logic.ErrPostNotFound) {
+			ResponseError(c, CodePostNotFound)
+			return
+		}
 		ResponseError(c, CodeServerBusy)
 		return
 	}
 	// 3. 返回响应
 	ResponseSuccess(c, data)
+}
+
+// UpdatePostHandler 修改帖子标题与正文，仅作者本人可以操作。
+// @Summary 编辑帖子接口
+// @Tags 帖子相关接口
+// @Accept application/json
+// @Produce application/json
+// @Param Authorization header string true "Bearer 用户令牌"
+// @Param id path string true "帖子 id"
+// @Param object body models.ParamsUpdatePost true "编辑帖子参数"
+// @Security ApiKeyAuth
+// @Success 200 {object} ResponseData
+// @Router /post/{id} [put]
+func UpdatePostHandler(c *gin.Context) {
+	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || postID <= 0 {
+		ResponseError(c, CodeInvalidParam)
+		return
+	}
+	params := new(models.ParamsUpdatePost)
+	if err = c.ShouldBindJSON(params); err != nil {
+		ResponseError(c, CodeInvalidParam)
+		return
+	}
+	authorID, err := getCurrentUserID(c)
+	if err != nil {
+		ResponseError(c, CodeNeedLogin)
+		return
+	}
+	if err = logic.UpdatePost(postID, authorID, params); err != nil {
+		switch {
+		case errors.Is(err, logic.ErrPostNotFound):
+			ResponseError(c, CodePostNotFound)
+		case errors.Is(err, logic.ErrForbidden):
+			ResponseError(c, CodeForbidden)
+		default:
+			zap.L().Error("logic.UpdatePost failed", zap.Error(err))
+			ResponseError(c, CodeServerBusy)
+		}
+		return
+	}
+	ResponseSuccess(c, nil)
 }
 
 // GetPostListHandler 基础版获取帖子列表的处理函数

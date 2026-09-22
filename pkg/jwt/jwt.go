@@ -1,54 +1,56 @@
 package jwt
 
 import (
-	"github.com/scut2024hjt/convo/settings"
-	"errors"
-	"github.com/dgrijalva/jwt-go"
+	"fmt"
+	"strconv"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/scut2024hjt/convo/settings"
 )
 
 //const TokenExpireDuration = time.Hour * 2
 
-var mySecret = []byte("迷途小书童")
-
-// MyClaims 自定义声明结构体并内嵌 jwt.StandardClaims
-// jwt 包自带的 jwt.StandardClaims 只包含了官方字段
-// 我们这里需要额外记录一个 UserID 字段，所以要自定义结构体
-// 如果想要保存更多信息，都可以添加到这个结构体中
 type MyClaims struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	jwt.StandardClaims
+	Username  string `json:"username"`
+	SessionID string `json:"sid"`
+	jwt.RegisteredClaims
 }
 
-// GenToken 生成 JWT
-func GenToken(userID int64, username string) (string, error) {
-	// 创建一个我们自己的声明的数据
+func ExpireDuration() time.Duration {
+	return time.Duration(settings.Conf.JwtExpire) * time.Hour
+}
+
+func GenToken(userID int64, username, sessionID string) (string, time.Time, error) {
+	now := time.Now()
+	expiresAt := now.Add(ExpireDuration()).Truncate(time.Second)
 	c := MyClaims{
-		UserID:   userID,
-		Username: username, // 自定义字段
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: time.Now().Add(time.Duration(settings.Conf.JwtExpire) * time.Hour).Unix(), // 过期时间
-			Issuer:    "convo",                                                                // 签发人
+		Username:  username,
+		SessionID: sessionID,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   strconv.FormatInt(userID, 10),
+			Issuer:    "convo",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
 	}
-	// 使用指定的签名方法创建签名对象
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, c)
-	// 使用指定的 secret 签名并获得完整的编码后的字符串 token
-	return token.SignedString(mySecret)
+	tokenString, err := token.SignedString([]byte(settings.Conf.JwtSecret))
+	return tokenString, expiresAt, err
 }
 
-// ParseToken 解析JWT
 func ParseToken(tokenString string) (*MyClaims, error) {
-	// 解析 token
 	token, err := jwt.ParseWithClaims(tokenString, &MyClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return mySecret, nil
-	})
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method: %s", token.Method.Alg())
+		}
+		return []byte(settings.Conf.JwtSecret), nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithIssuer("convo"))
 	if err != nil {
 		return nil, err
 	}
-	if claims, ok := token.Claims.(*MyClaims); ok && token.Valid { // 校验 token
+	if claims, ok := token.Claims.(*MyClaims); ok && token.Valid {
 		return claims, nil
 	}
-	return nil, errors.New("invalid token")
+	return nil, fmt.Errorf("invalid token")
 }

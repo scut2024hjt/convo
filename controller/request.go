@@ -2,11 +2,13 @@ package controller
 
 import (
 	"errors"
-	"github.com/gin-gonic/gin"
 	"strconv"
+
+	"github.com/gin-gonic/gin"
 )
 
 const CtxtUserIDKey = "userID"
+const CtxtSessionIDKey = "sessionID"
 
 var ErrorUserNotLogin = errors.New("用户未登录")
 
@@ -23,6 +25,18 @@ func getCurrentUserID(c *gin.Context) (userID int64, err error) {
 		return
 	}
 	return
+}
+
+func getCurrentSessionID(c *gin.Context) (string, error) {
+	sid, ok := c.Get(CtxtSessionIDKey)
+	if !ok {
+		return "", ErrorUserNotLogin
+	}
+	value, ok := sid.(string)
+	if !ok || value == "" {
+		return "", ErrorUserNotLogin
+	}
+	return value, nil
 }
 
 // getPageInfo 获取分页参数

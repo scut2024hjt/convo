@@ -8,15 +8,26 @@ const (
 
 // ParamsSignUp 注册请求参数
 type ParamsSignUp struct {
-	Username   string `json:"username" binding:"required"`
-	Password   string `json:"password" binding:"required"`
+	Username   string `json:"username" binding:"required,min=3,max=32"`
+	Password   string `json:"password" binding:"required,min=8,max=72"`
 	RePassword string `json:"re_password" binding:"required,eqfield=Password"`
 }
 
 // ParamsLogin 登录请求参数
 type ParamsLogin struct {
-	Username string `json:"username" binding:"required"`
+	Username string `json:"username" binding:"required,max=32"`
 	Password string `json:"password" binding:"required"`
+}
+
+type ParamsCreatePost struct {
+	CommunityID int64  `json:"community_id" binding:"required"`
+	Title       string `json:"title" binding:"required,max=128"`
+	Content     string `json:"content" binding:"required,max=8192"`
+}
+
+type ParamsUpdatePost struct {
+	Title   string `json:"title" binding:"required,max=128"`
+	Content string `json:"content" binding:"required,max=8192"`
 }
 
 // ParamsVoteData 投票数据

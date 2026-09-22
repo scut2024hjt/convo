@@ -12,6 +12,10 @@ const (
 
 	CodeNeedLogin
 	CodeValidToken
+	CodeVoteExpired
+	CodePostNotFound
+	CodeForbidden
+	CodeAuthUnavailable
 )
 
 var codeMsgMap = map[ResCode]string{
@@ -23,6 +27,10 @@ var codeMsgMap = map[ResCode]string{
 	CodeServerBusy:      "服务繁忙",
 	CodeNeedLogin:       "需要登录",
 	CodeValidToken:      "无效的 token",
+	CodeVoteExpired:     "投票时间已过",
+	CodePostNotFound:    "帖子不存在",
+	CodeForbidden:       "无权执行该操作",
+	CodeAuthUnavailable: "认证服务暂不可用",
 }
 
 func (rc ResCode) Msg() string {

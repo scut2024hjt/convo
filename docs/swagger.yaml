@@ -104,6 +104,19 @@ definitions:
       name:
         type: string
     type: object
+  models.ParamsCreatePost:
+    properties:
+      community_id:
+        type: integer
+      content:
+        type: string
+      title:
+        type: string
+    required:
+    - community_id
+    - content
+    - title
+    type: object
   models.ParamsLogin:
     properties:
       password:
@@ -126,6 +139,16 @@ definitions:
     - password
     - re_password
     - username
+    type: object
+  models.ParamsUpdatePost:
+    properties:
+      content:
+        type: string
+      title:
+        type: string
+    required:
+    - content
+    - title
     type: object
   models.ParamsVoteData:
     properties:
@@ -253,6 +276,26 @@ paths:
       summary: 用户登录请求接口
       tags:
       - 用户相关接口
+  /logout:
+    post:
+      parameters:
+      - description: Bearer 用户令牌
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/controller.ResponseData'
+      security:
+      - ApiKeyAuth: []
+      summary: 退出登录接口
+      tags:
+      - 用户相关接口
   /post:
     post:
       consumes:
@@ -262,12 +305,14 @@ paths:
       - description: Bearer 用户令牌
         in: header
         name: Authorization
+        required: true
         type: string
       - description: 创建帖子参数
         in: body
         name: object
+        required: true
         schema:
-          $ref: '#/definitions/models.Post'
+          $ref: '#/definitions/models.ParamsCreatePost'
       produces:
       - application/json
       responses:
@@ -280,19 +325,16 @@ paths:
       summary: 创建帖子接口
       tags:
       - 帖子相关接口
-  /post/:id:
+  /post/{id}:
     get:
       consumes:
       - application/json
       description: 获取帖子详情接口
       parameters:
-      - description: Bearer 用户令牌
-        in: header
-        name: Authorization
-        type: string
       - description: 帖子 id 参数
-        in: query
+        in: path
         name: id
+        required: true
         type: string
       produces:
       - application/json
@@ -301,9 +343,39 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/controller._ResponsePostList'
+      summary: 获取帖子详情接口
+      tags:
+      - 帖子相关接口
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Bearer 用户令牌
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: 帖子 id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 编辑帖子参数
+        in: body
+        name: object
+        required: true
+        schema:
+          $ref: '#/definitions/models.ParamsUpdatePost'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/controller.ResponseData'
       security:
       - ApiKeyAuth: []
-      summary: 获取帖子详情接口
+      summary: 编辑帖子接口
       tags:
       - 帖子相关接口
   /posts:

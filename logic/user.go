@@ -1,12 +1,16 @@
 package logic
 
 import (
+	"crypto/rand"
+	"encoding/base64"
+	"time"
+
 	"github.com/scut2024hjt/convo/dao/mysql"
+	redisdao "github.com/scut2024hjt/convo/dao/redis"
 	"github.com/scut2024hjt/convo/models"
 	"github.com/scut2024hjt/convo/pkg/encrypt"
 	"github.com/scut2024hjt/convo/pkg/jwt"
 	"github.com/scut2024hjt/convo/pkg/snowflake"
-	"fmt"
 )
 
 // SignUp 存放业务逻辑代码
@@ -24,10 +28,11 @@ func SignUp(p *models.ParamsSignUp) (err error) {
 		Username: p.Username,
 		Password: p.Password,
 	}
-	fmt.Printf("%#v\n", user)
 	// 3. 密码加密
-	user.Password = encrypt.EncryptPassword(user.Password)
-	fmt.Printf("%#v\n", user)
+	user.Password, err = encrypt.EncryptPassword(user.Password)
+	if err != nil {
+		return err
+	}
 	// 4. 保存进数据库
 	err = mysql.InsertUser(user)
 	// redis.xxx ...
@@ -44,12 +49,22 @@ func Login(p *models.ParamsLogin) (user *models.User, err error) {
 	if err := mysql.Login(user); err != nil {
 		return nil, err
 	}
-	fmt.Printf("%+v\n", user)
-	// 生成 JWT
-	token, err := jwt.GenToken(user.UserID, user.Username)
+	sessionBytes := make([]byte, 32)
+	if _, err = rand.Read(sessionBytes); err != nil {
+		return nil, err
+	}
+	sessionID := base64.RawURLEncoding.EncodeToString(sessionBytes)
+	token, expiresAt, err := jwt.GenToken(user.UserID, user.Username, sessionID)
 	if err != nil {
-		return
+		return nil, err
+	}
+	if err = redisdao.SetSession(user.UserID, sessionID, time.Until(expiresAt)); err != nil {
+		return nil, err
 	}
 	user.Token = token
 	return
+}
+
+func Logout(userID int64, sessionID string) error {
+	return redisdao.DeleteSession(userID, sessionID)
 }

@@ -4,7 +4,8 @@ app:
   port: 9090
 
 auth:
-  jwt_expire: 8760
+  jwt_expire: 24
+  jwt_secret: "change-me-in-production"
 
 log:
   level: "debug"
@@ -17,7 +18,7 @@ mysql:
   host: 127.0.0.1
   port: 33306
   user: "root"
-  password: "123"
+  password: "123456"
   db: "convo"
   max_open_connection: 100
   max_idle_connection: 500
@@ -33,8 +34,18 @@ snowflake:
   start_time: "2020-07-01"
   machine_id: 1
 
-encrypt:
-  secret_key: "change-me-in-production"
-
 gin:
   mode: "debug"
+
+rabbitmq:
+  url: "amqp://convo:convo@127.0.0.1:5672/"
+  exchange: "convo.events"
+  vote_queue: "convo.vote.persist.v1"
+  publish_confirm_timeout_seconds: 5
+  consumer_prefetch: 32
+  max_retries: 5
+  retry_delay_milliseconds: 5000
+
+cache:
+  post_detail_ttl_seconds: 600
+  delayed_delete_milliseconds: 500

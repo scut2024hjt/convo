@@ -1,10 +1,13 @@
 package logic
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/scut2024hjt/convo/dao/redis"
 	"github.com/scut2024hjt/convo/models"
+	"github.com/scut2024hjt/convo/pkg/snowflake"
 	"go.uber.org/zap"
-	"strconv"
 )
 
 // 投票功能
@@ -16,11 +19,16 @@ import (
 // 3. 记录用户为该帖子投票的分数
 
 // VoteForPost 为帖子投票的函数
-func VoteForPost(userID int64, p *models.ParamsVoteData) error {
+func VoteForPost(userID int64, p *models.ParamsVoteData) (*models.VoteResult, error) {
 	zap.L().Debug("VoteForPost",
 		zap.Int64("userID", userID),
 		zap.Int64("postID", p.PostID),
 		zap.Int8("direction", p.Direction))
-	return redis.VoteForPost(strconv.Itoa(int(userID)), strconv.Itoa(int(p.PostID)), float64(p.Direction))
-
+	return redis.VoteForPost(
+		strconv.FormatInt(userID, 10),
+		strconv.FormatInt(p.PostID, 10),
+		p.Direction,
+		strconv.FormatInt(snowflake.GenID(), 10),
+		time.Now().Unix(),
+	)
 }

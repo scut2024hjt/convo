@@ -1,13 +1,24 @@
 package encrypt
 
 import (
-	"github.com/scut2024hjt/convo/settings"
-	"crypto/md5"
-	"encoding/hex"
+	"errors"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
-func EncryptPassword(opassword string) string {
-	h := md5.New()
-	h.Write([]byte(settings.Conf.EncryptConfig.SecretKey))
-	return hex.EncodeToString(h.Sum([]byte(opassword)))
+var ErrPasswordTooLong = errors.New("password exceeds bcrypt 72-byte limit")
+
+func EncryptPassword(password string) (string, error) {
+	if len([]byte(password)) > 72 {
+		return "", ErrPasswordTooLong
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+func ComparePassword(hash, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 }
