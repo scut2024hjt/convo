@@ -1,6 +1,10 @@
 FROM golang:1.22-alpine AS builder
 
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+# Go module 代理。默认官方源；国内网络可覆盖成 goproxy.cn 之类的国内镜像，
+# 避免 `go mod download` 走到国外而拖慢构建（或消耗代理流量）：
+#   docker compose build --build-arg GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY} CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 WORKDIR /src
 
 COPY go.mod go.sum ./

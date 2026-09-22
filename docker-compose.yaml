@@ -38,7 +38,11 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
 
   convo_app:
-    build: .
+    build:
+      context: .
+      args:
+        # 默认官方源；国内可用 CONVO_GOPROXY=https://goproxy.cn,direct 覆盖
+        GOPROXY: ${CONVO_GOPROXY:-https://proxy.golang.org,direct}
     restart: unless-stopped
     command: ["./wait-for.sh", "redis507:6379", "mysql8019:3306", "rabbitmq:5672", "--", "./convo_app"]
     depends_on:
