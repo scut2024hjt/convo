@@ -1,0 +1,5 @@
+services:
+  rabbitmq:
+    ports: !override
+      - "35672:5672"
+      - "15672:15672"

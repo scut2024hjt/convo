@@ -40,12 +40,12 @@ func main() {
 	// 1. 加载配置
 	if err := settings.Init(); err != nil {
 		fmt.Printf("init settings failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	// 2. 初始化日志
 	if err := logger.Init(settings.Conf.LogConfig); err != nil {
 		fmt.Printf("init settings failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	zap.L().Debug("logger init success")
 	defer func(l *zap.Logger) {
@@ -57,38 +57,40 @@ func main() {
 	// 3. 初始化 MySQL
 	if err := mysql.Init(settings.Conf.MySQLConfig); err != nil {
 		fmt.Printf("init settings failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	defer mysql.Close()
 	// 4. 初始化 Redis
 	if err := redis.Init(settings.Conf.RedisConfig); err != nil {
 		fmt.Printf("init settings failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	defer redis.Close()
 	// Refuse traffic when Redis lost the post/vote indexes or an offline
 	// rebuild was interrupted. Online MySQL-to-Redis overwrite is unsafe while
 	// RabbitMQ may still contain newer vote events.
+	// 启动校验失败必须用非 0 退出码：否则容器编排与监控会把它当成"正常结束"，
+	// 从而漏掉"索引缺失、需要离线重建"这个明确的故障信号。
 	if err := logic.EnsureRedisStateReady(); err != nil {
 		fmt.Printf("validate redis state failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	// 雪花算法：分布式 ID 生成器
 	if err := snowflake.Init(settings.Conf.SnowFlakeConfig.StartTime, settings.Conf.SnowFlakeConfig.MachineId); err != nil {
 		fmt.Printf("init snowflake failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	// RabbitMQ 同时承载 Stream relay 的可靠发布和 MySQL 落库消费者。
 	mqClient, err := mq.New(settings.Conf.RabbitMQConfig)
 	if err != nil {
 		fmt.Printf("init rabbitmq failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	defer mqClient.Close()
 	// 初始化 gin 框架内置的翻译器
 	if err := controller.InitTrans("zh"); err != nil {
 		fmt.Printf("Init validator trans failed, err: %v\n", err)
-		return
+		os.Exit(1)
 	}
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
 	var workerGroup sync.WaitGroup
