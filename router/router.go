@@ -50,7 +50,8 @@ func Setup() *gin.Engine {
 	{
 		v1.POST("/post", controller.CreatePostHandler)
 		v1.PUT("/post/:id", controller.UpdatePostHandler)
-		v1.POST("/vote", controller.PostVoteHandler)
+		// 投票接口额外挂一层用户级滑动窗口限流，拦短时刷票
+		v1.POST("/vote", middlewares.VoteRateLimitMiddleware(), controller.PostVoteHandler)
 		v1.POST("/logout", controller.LogoutHandler)
 	}
 	runtime.SetBlockProfileRate(1)

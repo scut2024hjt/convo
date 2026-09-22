@@ -27,6 +27,11 @@ func getCurrentUserID(c *gin.Context) (userID int64, err error) {
 	return
 }
 
+// GetCurrentUserID 导出给中间件使用，避免中间件重复解析 JWT。
+func GetCurrentUserID(c *gin.Context) (int64, error) {
+	return getCurrentUserID(c)
+}
+
 func getCurrentSessionID(c *gin.Context) (string, error) {
 	sid, ok := c.Get(CtxtSessionIDKey)
 	if !ok {

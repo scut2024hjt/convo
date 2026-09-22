@@ -1,8 +1,8 @@
 package mysql
 
 import (
-	"github.com/scut2024hjt/convo/models"
 	"database/sql"
+	"github.com/scut2024hjt/convo/models"
 
 	"github.com/jmoiron/sqlx"
 	"go.uber.org/zap"

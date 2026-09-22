@@ -13,6 +13,7 @@ const (
 	KeyVoteOutboxStream      = "outbox:vote"
 	KeyAuthSessionPrefix     = "auth:session:"
 	KeyPostCachePrefix       = "cache:post:"
+	KeyVoteRateLimitPrefix   = "ratelimit:vote:"
 )
 
 func getRedisKey(key string) string {

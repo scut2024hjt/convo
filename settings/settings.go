@@ -20,6 +20,7 @@ type Config struct {
 	*AuthConfig      `mapstructure:"auth"`
 	*RabbitMQConfig  `mapstructure:"rabbitmq"`
 	*CacheConfig     `mapstructure:"cache"`
+	*RateLimitConfig `mapstructure:"ratelimit"`
 }
 
 type AppConfig struct {
@@ -84,6 +85,12 @@ type CacheConfig struct {
 	DelayedDeleteMilliseconds int `mapstructure:"delayed_delete_milliseconds"`
 }
 
+// RateLimitConfig 投票接口的用户级滑动窗口限流参数。
+type RateLimitConfig struct {
+	VoteRateLimitWindowMilliseconds int   `mapstructure:"vote_window_milliseconds"`
+	VoteRateLimitMaxRequests        int64 `mapstructure:"vote_max_requests"`
+}
+
 func Init() (err error) {
 	viper.SetConfigName("config") // 指定配置文件名称（不需要带后缀）
 	viper.SetConfigType("yaml")   // 指定配置文件类型
@@ -99,6 +106,7 @@ func Init() (err error) {
 		"rabbitmq.max_retries", "rabbitmq.retry_delay_milliseconds",
 		"auth.jwt_secret", "auth.jwt_expire", "snowflake.machine_id",
 		"cache.post_detail_ttl_seconds", "cache.delayed_delete_milliseconds",
+		"ratelimit.vote_window_milliseconds", "ratelimit.vote_max_requests",
 	} {
 		if bindErr := viper.BindEnv(key); bindErr != nil {
 			return bindErr
@@ -122,7 +130,8 @@ func Init() (err error) {
 func (config *Config) Validate() error {
 	if config.AppConfig == nil || config.MySQLConfig == nil || config.RedisConfig == nil ||
 		config.SnowFlakeConfig == nil || config.GinConfig == nil || config.LogConfig == nil ||
-		config.AuthConfig == nil || config.RabbitMQConfig == nil || config.CacheConfig == nil {
+		config.AuthConfig == nil || config.RabbitMQConfig == nil || config.CacheConfig == nil ||
+		config.RateLimitConfig == nil {
 		return fmt.Errorf("required config section is missing")
 	}
 	if config.JwtExpire <= 0 || strings.TrimSpace(config.JwtSecret) == "" {
@@ -143,6 +152,9 @@ func (config *Config) Validate() error {
 	}
 	if config.PostDetailTTLSeconds <= 0 || config.DelayedDeleteMilliseconds < 0 {
 		return fmt.Errorf("cache ttl and delayed delete settings are invalid")
+	}
+	if config.VoteRateLimitWindowMilliseconds <= 0 || config.VoteRateLimitMaxRequests <= 0 {
+		return fmt.Errorf("ratelimit window and max requests must be positive")
 	}
 	return nil
 }

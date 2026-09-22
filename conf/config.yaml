@@ -49,3 +49,7 @@ rabbitmq:
 cache:
   post_detail_ttl_seconds: 600
   delayed_delete_milliseconds: 500
+
+ratelimit:
+  vote_window_milliseconds: 1000
+  vote_max_requests: 10

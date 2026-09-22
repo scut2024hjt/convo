@@ -35,7 +35,7 @@ func GetPostDetailByID(postID int64) (*models.ApiPostDetail, error) {
 		PostUpdateTime        time.Time `db:"post_update_time"`
 		AuthorName            string    `db:"author_name"`
 		CommunityName         string    `db:"community_name"`
-		CommunityIntroduction string   `db:"community_introduction"`
+		CommunityIntroduction string    `db:"community_introduction"`
 		CommunityCreateTime   time.Time `db:"community_create_time"`
 	}
 	err := db.Get(&row, `

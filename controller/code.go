@@ -16,6 +16,7 @@ const (
 	CodePostNotFound
 	CodeForbidden
 	CodeAuthUnavailable
+	CodeTooManyRequests
 )
 
 var codeMsgMap = map[ResCode]string{
@@ -31,6 +32,7 @@ var codeMsgMap = map[ResCode]string{
 	CodePostNotFound:    "帖子不存在",
 	CodeForbidden:       "无权执行该操作",
 	CodeAuthUnavailable: "认证服务暂不可用",
+	CodeTooManyRequests: "请求过于频繁",
 }
 
 func (rc ResCode) Msg() string {

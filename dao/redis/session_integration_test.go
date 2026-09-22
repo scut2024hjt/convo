@@ -7,15 +7,10 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/scut2024hjt/convo/settings"
 )
 
 func TestSessionReplacementAndCompareDelete(t *testing.T) {
-	if err := Init(&settings.RedisConfig{Host: "127.0.0.1", Port: 36379, PoolSize: 4}); err != nil {
-		t.Skipf("redis integration service is unavailable: %v", err)
-	}
-	defer Close()
+	initIntegrationRedis(t, 4)
 
 	userID := time.Now().UnixNano()
 	defer client.Del(getRedisKey(KeyAuthSessionPrefix + strconv.FormatInt(userID, 10)))

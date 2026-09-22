@@ -7,9 +7,9 @@ type VoteEvent struct {
 	EventType  string `json:"event_type"`
 	UserID     string `json:"user_id"`
 	PostID     string `json:"post_id"`
-	Direction  int8  `json:"direction"`
-	Version    int64 `json:"version"`
-	OccurredAt int64 `json:"occurred_at"`
+	Direction  int8   `json:"direction"`
+	Version    int64  `json:"version"`
+	OccurredAt int64  `json:"occurred_at"`
 }
 
 type VoteResult struct {

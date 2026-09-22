@@ -13,14 +13,10 @@ import (
 	"time"
 
 	goredis "github.com/go-redis/redis"
-	"github.com/scut2024hjt/convo/settings"
 )
 
 func TestVoteScriptTransitionsAndConcurrency(t *testing.T) {
-	if err := Init(&settings.RedisConfig{Host: "127.0.0.1", Port: 36379, PoolSize: 32}); err != nil {
-		t.Skipf("redis integration service is unavailable: %v", err)
-	}
-	defer Close()
+	initIntegrationRedis(t, 32)
 
 	base := time.Now().UnixNano()
 	posts := []int64{base, base + 1, base + 2, base + 3}
@@ -79,7 +75,7 @@ func TestVoteScriptTransitionsAndConcurrency(t *testing.T) {
 	}
 
 	scoreKey := getRedisKey(KeyPostScoreZSet)
-	initialScore, err := client.ZScore(scoreKey, posts[2]).Result()
+	initialScore, err := client.ZScore(scoreKey, strconv.FormatInt(posts[2], 10)).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +90,7 @@ func TestVoteScriptTransitionsAndConcurrency(t *testing.T) {
 	if err != nil || upVotes != 100 {
 		t.Fatalf("upvotes=%d err=%v", upVotes, err)
 	}
-	finalScore, err := client.ZScore(scoreKey, posts[2]).Result()
+	finalScore, err := client.ZScore(scoreKey, strconv.FormatInt(posts[2], 10)).Result()
 	if err != nil || finalScore != initialScore+100*scorePerVote {
 		t.Fatalf("score=%v want=%v err=%v", finalScore, initialScore+100*scorePerVote, err)
 	}

@@ -25,7 +25,7 @@ type ApiPostDetail struct {
 // CachedPostDetail deliberately excludes VoteNum, which is read from the
 // realtime vote state for every detail request.
 type CachedPostDetail struct {
-	AuthorName       string             `json:"author_name"`
+	AuthorName string `json:"author_name"`
 	*Post
 	*CommunityDetail `json:"community"`
 }
