@@ -10,6 +10,7 @@
 - 防刷：用户级滑动窗口限流（ZSET 精确窗口，Lua 保证判重与计数原子）+ 同方向重复投票幂等
 - 异步持久化：RabbitMQ durable/persistent、mandatory + Publisher Confirm、手动 ACK、有限重试和死信队列
 - 消费一致性：`event_id` 去重，`version` 防止乱序事件覆盖新状态
+- 故障恢复：启动时检查 Redis 派生索引完整性，提供停写后的 MySQL → Redis 分批重建命令
 - 多实例：Snowflake `machine_id` 可由环境变量配置
 
 ## 技术栈
@@ -33,6 +34,7 @@
 
 ```
 main.go              程序入口、依赖初始化
+cmd/rebuild-redis/   停写后的 Redis 派生状态维护重建命令
 router/              路由注册与中间件装配
 middlewares/         JWT 与 Redis Session 鉴权
 controller/          HTTP 参数绑定、响应封装、Swagger 注解
@@ -90,18 +92,44 @@ docker compose up --build
 
 投票接口成功表示 Redis 中的实时状态和 Outbox 事件已原子提交。Relay 只有收到 RabbitMQ Confirm 后才删除 Stream 消息；消费者只有在 MySQL 事务成功，或确认事件重复/过期后才 ACK。进程在任一确认点前退出都会导致重投，并由 `event_id` 和 `version` 保证最终结果不被重复或乱序破坏。
 
-已验证的故障行为：
+故障行为与验证状态：
 
-| 故障 | 行为 |
-| --- | --- |
-| RabbitMQ 不可用 | 投票仍返回成功（实测 7~8ms），事件留在 Outbox Stream；MQ 恢复后自动补偿落库 |
-| 消费者进程退出 | 消息留在队列，重启后继续消费；MySQL 用 `event_id` 去重 |
-| Redis 不可用 | 投票快速失败（8ms 返回「认证服务暂不可用」），不会写入半成品数据；帖子详情降级直查 MySQL |
-| Redis 数据丢失 | **尚未覆盖**：实时投票状态、帖子时间/热度 ZSet 没有从 MySQL 重建的路径，此时详情接口会返回错误的票数。见下方「已知限制」 |
+| 故障 | 行为 | 状态 |
+| --- | --- | --- |
+| RabbitMQ 不可用 | 投票仍返回成功（实测 7~8ms），事件留在 Outbox Stream；MQ 恢复后自动补偿落库 | 已真机验证 |
+| 消费者进程退出 | 消息留在队列，重启后继续消费；MySQL 用 `event_id` 去重 | 已真机验证 |
+| Redis 不可用 | 投票快速失败（8ms 返回「认证服务暂不可用」），不会写入半成品数据；帖子详情降级直查 MySQL | 已真机验证 |
+| Redis 数据丢失 | 运行中的详情请求会回源 MySQL，列表/发帖/投票拒绝使用不完整状态；重启时完整性检查拒绝带病启动，排空消息后可用维护命令从 MySQL 重建 | 已补集成测试，待真机复验 |
+
+## Redis 状态恢复
+
+Redis 中的帖子时间、热度、用户投票方向和版本号都可以由 MySQL 已持久化状态重建。恢复不是在线对账：正常情况下 Redis 可能领先于异步落库的 MySQL，直接用 MySQL 在线覆盖会回滚合法的新投票。
+
+执行步骤：
+
+1. 先从网关摘除实例或停止外部请求，阻止新的发帖和投票；暂时保留 consumer 运行。
+2. 等待 Redis Stream Outbox、RabbitMQ 主队列、重试队列和未 ACK 消息均归零，并处理 DLQ。
+3. 停止全部应用实例，再次确认消息已经排空。
+4. 执行重建，然后正常启动应用。
+
+```bash
+# 本地 Go 环境
+go run ./cmd/rebuild-redis --confirm-maintenance
+
+# 使用已经构建的 Docker 镜像，依赖容器需保持运行
+docker compose exec rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged
+docker compose stop convo_app
+docker compose exec rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged
+docker compose run --rm convo_app ./convo_rebuild_redis --confirm-maintenance
+docker compose up -d convo_app
+```
+
+命令分批读取 MySQL，以 `create_time + SUM(direction) * 432` 重算热度，并恢复社区索引、投票方向和每个用户的最高版本。重建中途失败会保留 `rebuilding` 标记，应用不会启动；排除故障后重新执行即可。
 
 ## 已知限制
 
-- Redis 是「帖子时间/热度排序 + 实时投票状态」的唯一持有者，没有冷启动重建或对账任务；`FLUSHDB` 或持久化文件损坏后无法自愈。
+- Redis 恢复是显式维护流程，不是在线自动对账；Redis AOF 尚未落盘且事件也未进入 RabbitMQ 的最后窗口无法从 MySQL 恢复。
+- 发帖仍是 MySQL → Redis 的跨存储写入：Redis 初始化会有限重试并记录 `post_id`，若持续失败需要执行重建命令；项目不宣称跨存储强一致。
 - 限流是「用户维度」的，多账号轮换刷票需要注册风控/设备指纹来兜，本项目未覆盖。
 - 投票时间是服务端时间，没有对齐客户端时钟；跨机房部署时需要额外的时钟假设。
 - `post:vote:version:{post_id}` 与 `post:voted:{post_id}` 没有 TTL，长期运行会随帖子数线性增长。
@@ -113,8 +141,11 @@ docker compose up --build
 ```bash
 go test ./...
 
-# 启动依赖服务后运行 Redis/MySQL 集成测试
-go test -tags=integration ./dao/redis ./dao/mysql
+# 启动依赖服务后运行 Redis/MySQL 与恢复流程集成测试
+go test -tags=integration ./...
+
+# 建议同时编译所有 integration 测试并执行静态检查
+go vet -tags=integration ./...
 ```
 
 集成测试跑在 Redis 的 15 号库上，因此可以和本地正在运行的实例共存。如果和实例共用 db 0，

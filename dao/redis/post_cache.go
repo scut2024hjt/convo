@@ -37,6 +37,16 @@ func DeletePostDetailCache(postID int64) error {
 }
 
 func GetPostVoteCount(postID int64) (int64, error) {
-	key := getRedisKey(KeyPostVotedZSetPrefix + strconv.FormatInt(postID, 10))
+	if err := EnsureVoteStateReadable(); err != nil {
+		return 0, err
+	}
+	post := strconv.FormatInt(postID, 10)
+	if _, err := client.ZScore(getRedisKey(KeyPostTimeZSet), post).Result(); err != nil {
+		if err == Nil {
+			return 0, ErrPostNotInitialized
+		}
+		return 0, err
+	}
+	key := getRedisKey(KeyPostVotedZSetPrefix + post)
 	return client.ZCount(key, "1", "1").Result()
 }

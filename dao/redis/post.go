@@ -18,6 +18,9 @@ func getIDsFormKey(key string, page, size int64) ([]string, error) {
 }
 
 func GetPostIDsInOrder(p *models.ParamsPostList) ([]string, error) {
+	if err := EnsureVoteStateReadable(); err != nil {
+		return nil, err
+	}
 	// 从 redis 获取 id
 	// 根据用户请求中携带的 order 参数确定要查询的 redis key
 	key := getRedisKey(KeyPostTimeZSet)
@@ -56,6 +59,9 @@ func GetPostVoteData(ids []string) (data []int64, err error) {
 
 // GetCommunityPostIDsInOrder 按社区查询 ids
 func GetCommunityPostIDsInOrder(p *models.ParamsPostList) ([]string, error) {
+	if err := EnsureVoteStateReadable(); err != nil {
+		return nil, err
+	}
 	orderKey := getRedisKey(KeyPostTimeZSet)
 	if p.Order == models.OrderScore {
 		orderKey = getRedisKey(KeyPostScoreZSet)

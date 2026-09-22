@@ -30,5 +30,8 @@ func initIntegrationRedis(t *testing.T, poolSize int) {
 	if err := client.FlushDB().Err(); err != nil {
 		t.Fatalf("flush integration db failed: %v", err)
 	}
+	if err := MarkVoteStateReady(); err != nil {
+		t.Fatalf("initialize vote state marker failed: %v", err)
+	}
 	t.Cleanup(Close)
 }

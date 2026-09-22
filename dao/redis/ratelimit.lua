@@ -5,7 +5,7 @@
 -- ARGV[1] 当前时间戳（毫秒）
 -- ARGV[2] 窗口长度（毫秒）
 -- ARGV[3] 窗口内允许的最大请求数
--- ARGV[4] 本次请求的唯一成员（毫秒时间戳-序号）
+-- ARGV[4] 本次请求的唯一成员（毫秒时间戳-随机 nonce）
 local key = KEYS[1]
 local now = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])

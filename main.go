@@ -15,6 +15,7 @@ import (
 	"github.com/scut2024hjt/convo/dao/mysql"
 	"github.com/scut2024hjt/convo/dao/redis"
 	"github.com/scut2024hjt/convo/logger"
+	"github.com/scut2024hjt/convo/logic"
 	"github.com/scut2024hjt/convo/mq"
 	"github.com/scut2024hjt/convo/pkg/snowflake"
 	"github.com/scut2024hjt/convo/router"
@@ -65,6 +66,13 @@ func main() {
 		return
 	}
 	defer redis.Close()
+	// Refuse traffic when Redis lost the post/vote indexes or an offline
+	// rebuild was interrupted. Online MySQL-to-Redis overwrite is unsafe while
+	// RabbitMQ may still contain newer vote events.
+	if err := logic.EnsureRedisStateReady(); err != nil {
+		fmt.Printf("validate redis state failed, err: %v\n", err)
+		return
+	}
 	// 雪花算法：分布式 ID 生成器
 	if err := snowflake.Init(settings.Conf.SnowFlakeConfig.StartTime, settings.Conf.SnowFlakeConfig.MachineId); err != nil {
 		fmt.Printf("init snowflake failed, err: %v\n", err)

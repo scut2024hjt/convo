@@ -11,17 +11,19 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -trimpath -ldflags="-s -w" -o /out/convo_app .
+RUN go build -trimpath -ldflags="-s -w" -o /out/convo_rebuild_redis ./cmd/rebuild-redis
 
 FROM alpine:3.20
 RUN apk add --no-cache bash ca-certificates netcat-openbsd
 WORKDIR /app
 
 COPY --from=builder /out/convo_app ./convo_app
+COPY --from=builder /out/convo_rebuild_redis ./convo_rebuild_redis
 COPY wait-for.sh ./wait-for.sh
 COPY templates ./templates
 COPY static ./static
 COPY conf ./conf
-RUN chmod 755 ./convo_app ./wait-for.sh
+RUN chmod 755 ./convo_app ./convo_rebuild_redis ./wait-for.sh
 
 EXPOSE 9090
 CMD ["./convo_app"]

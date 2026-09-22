@@ -1,10 +1,11 @@
 package redis
 
 import (
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-redis/redis"
@@ -14,10 +15,6 @@ import (
 var voteRateLimitLua string
 
 var voteRateLimitScript = redis.NewScript(voteRateLimitLua)
-
-// 同一毫秒内会有多个请求并发进入 Lua，用自增序号保证 ZSET member 唯一，
-// 否则同分同成员的 ZADD 会把两次请求合并成一次，导致实际放行数偏多。
-var rateLimitSequence uint64
 
 // VoteRateLimitResult 描述一次限流判定的结果。
 type VoteRateLimitResult struct {
@@ -36,8 +33,14 @@ func AllowVoteRequest(userID string, window time.Duration, limit int64) (*VoteRa
 		return nil, fmt.Errorf("vote rate limit must be positive, got %d", limit)
 	}
 	now := time.Now().UnixMilli()
-	member := strconv.FormatInt(now, 10) + "-" +
-		strconv.FormatUint(atomic.AddUint64(&rateLimitSequence, 1), 10)
+	// A process-local sequence is not unique across multiple application
+	// instances. A random nonce keeps ZSET members distinct even when two
+	// instances handle requests for the same user in the same millisecond.
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, fmt.Errorf("generate vote rate-limit member: %w", err)
+	}
+	member := strconv.FormatInt(now, 10) + "-" + hex.EncodeToString(nonce[:])
 
 	raw, err := voteRateLimitScript.Run(client,
 		[]string{getRedisKey(KeyVoteRateLimitPrefix + userID)},

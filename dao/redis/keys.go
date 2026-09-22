@@ -14,6 +14,7 @@ const (
 	KeyAuthSessionPrefix     = "auth:session:"
 	KeyPostCachePrefix       = "cache:post:"
 	KeyVoteRateLimitPrefix   = "ratelimit:vote:"
+	KeyVoteStateStatus       = "state:post-vote-index"
 )
 
 func getRedisKey(key string) string {

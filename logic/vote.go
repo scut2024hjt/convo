@@ -20,6 +20,9 @@ import (
 
 // VoteForPost 为帖子投票的函数
 func VoteForPost(userID int64, p *models.ParamsVoteData) (*models.VoteResult, error) {
+	if err := redis.EnsureVoteStateReadable(); err != nil {
+		return nil, err
+	}
 	zap.L().Debug("VoteForPost",
 		zap.Int64("userID", userID),
 		zap.Int64("postID", p.PostID),

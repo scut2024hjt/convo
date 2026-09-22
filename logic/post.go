@@ -3,6 +3,7 @@ package logic
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -23,6 +24,9 @@ var (
 )
 
 func CreatePost(p *models.Post) (err error) {
+	if err = redis.EnsureVoteStateReadable(); err != nil {
+		return fmt.Errorf("redis post index is unavailable: %w", err)
+	}
 	// 1. 生成 post_id
 	p.ID = snowflake.GenID()
 	// 2. 保存到数据库
@@ -30,8 +34,25 @@ func CreatePost(p *models.Post) (err error) {
 	if err != nil {
 		return
 	}
-	err = redis.CreatePost(p.ID, p.CommunityID)
-	return
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err = redis.CreatePost(p.ID, p.CommunityID)
+		if err == nil {
+			return nil
+		}
+		zap.L().Error("initialize post redis indexes failed",
+			zap.Int64("post_id", p.ID),
+			zap.Int("attempt", attempt),
+			zap.Error(err),
+		)
+		if attempt < maxAttempts {
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+		}
+	}
+	// The MySQL row is deliberately retained: deleting it after an ambiguous
+	// Redis timeout could create the opposite orphan. Startup validation and
+	// the offline rebuild command provide a deterministic repair path.
+	return fmt.Errorf("post %d was stored in mysql but redis index initialization failed; run the offline redis rebuild: %w", p.ID, err)
 }
 
 // GetPostById 根据帖子 id 查询帖子详情数据

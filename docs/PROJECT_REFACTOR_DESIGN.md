@@ -1,8 +1,11 @@
 # Convo 社区论坛后端改造设计文档
 
-> 文档状态：核心实施基线（v1.2，已完成范围收敛）  
-> 适用代码基线：`3b3c81e`（`main`）  
-> 最近更新：2026-09-21  
+> 文档状态：核心实施基线（v1.3，已完成真机验证与恢复边界修订）
+>
+> 适用代码基线：`a83ccf7`（`feat/v2-optimization`）
+>
+> 最近更新：2026-09-22
+>
 > 文档目标：约束后续设计、编码、测试和简历表述，避免实现过程中不断堆叠技术或偏离核心故事线。
 
 ---
@@ -33,7 +36,7 @@
 
 ### 2.2 建议在全部验收完成后使用的简历表述
 
-- **并发投票**：使用 Redis Lua 原子维护用户投票状态、帖子热度与事件版本，解决并发改票和重复投票导致的计分竞态。
+- **并发投票**：使用 Redis Lua 原子维护用户投票状态、帖子热度与事件版本，并通过用户级滑动窗口限制短时刷票，解决并发改票和重复提交导致的计分竞态。
 - **写链路解耦**：通过 Redis Outbox 与 RabbitMQ 解耦投票请求和 MySQL 持久化，使 MQ 临时不可用时投票仍可被记录并在恢复后补发。
 - **消息可靠**：采用持久化队列、Publisher Confirm、手动 ACK、版本校验和消费幂等，在至少一次投递下保证业务效果不重复，并实现 Redis 与 MySQL 最终一致。
 - **缓存一致性**：使用 Cache-Aside 缓存帖子详情，通过“更新数据库、立即删缓存、延迟再次删除”降低并发读写产生脏缓存的概率。
@@ -55,7 +58,7 @@
 
 | 项目描述 | 必须落地的最小实现 |
 | --- | --- |
-| 并发投票 | Redis Lua 原子更新方向、热度、version 和 Stream 事件 |
+| 并发投票 | Redis Lua 原子更新方向、热度、version 和 Stream 事件；投票入口按用户做滑动窗口限流 |
 | 写链路解耦 | Outbox Relay 把 Stream 事件发布到 RabbitMQ，HTTP 不等待 MySQL |
 | 消息可靠 | durable/persistent、mandatory + Confirm、手动 ACK、消费幂等、version 防乱序、有限重试与 DLQ |
 | 缓存一致性 | 帖子详情 Cache-Aside、编辑帖子、更新 DB 后立即删除并延迟再删 |
@@ -141,7 +144,7 @@ flowchart TD
 - **HTTP 投票成功不代表**：MySQL 已经同步完成。
 - **最终一致**：在 Redis、RabbitMQ 和 MySQL 恢复可用且后台任务持续运行的前提下，MySQL 中每个 `(user_id, post_id)` 最终收敛到 Redis 产生的最高版本状态。
 - **实时读**：投票方向、票数和热度以 Redis 为准。
-- **恢复基线**：MySQL 保存已持久化的最高版本状态，可用于重建 Redis；尚未进入 MySQL 的事件依赖 Redis AOF 和 Stream Outbox。
+- **恢复基线**：MySQL 保存已持久化的最高版本状态。停写并排空 RabbitMQ 后，可通过维护命令分批重建 Redis；尚未进入 MySQL 的事件仍依赖 Redis AOF、Stream Outbox 或 RabbitMQ 持久化。
 
 ### 4.3 故障行为
 
@@ -153,6 +156,7 @@ flowchart TD
 | Relay 发布成功后、Stream ACK 前崩溃 | 事件可能再次发布 | 消费幂等和版本校验消除重复效果 |
 | Consumer DB 提交后、MQ ACK 前崩溃 | RabbitMQ 重新投递 | `event_id` 幂等，重复消息不重复生效 |
 | 较旧事件晚于新事件到达 | 消费者收到乱序事件 | 仅更高 `version` 可覆盖当前状态 |
+| Redis 派生状态丢失 | 运行中详情票数回源 MySQL；重启时完整性检查拒绝服务 | 停止写入、排空 MQ 后执行 MySQL → Redis 维护重建 |
 
 ---
 
@@ -167,6 +171,8 @@ flowchart TD
 | `convo:post:voted:{postID}` | ZSet | `member=userID, score=-1/1` | 暂不设置 |
 | `convo:post:vote:version:{postID}` | Hash | `field=userID, value=version` | 暂不设置 |
 | `convo:outbox:vote` | Stream | 待发布的投票状态变更事件 | 未 Return 且 Confirm ACK 后 `XACK` + `XDEL` |
+| `convo:ratelimit:vote:{userID}` | ZSet | 滑动窗口内的投票请求时间 | 窗口长度 |
+| `convo:state:post-vote-index` | String | `ready:v1` 或 `rebuilding:v1` | 无 |
 
 说明：取消投票时从 `post:voted` 中移除用户，但版本 Hash 必须保留，否则迟到的旧消息可能覆盖取消状态。首轮不为投票状态和版本设置 TTL；未来若做归档，必须同时满足“投票窗口关闭、Outbox/MQ 无该帖积压、MySQL 版本已对齐”，再把最终票数物化后清理，不能仅按 7 天定时删除。
 
@@ -284,9 +290,28 @@ appendfsync everysec
 
 ### 5.8 与帖子创建链路的边界
 
-投票 Lua 依赖创建帖子时写入的 `post:time` 和 `post:score`。本轮只要求沿用现有创建流程并确保 Redis 初始化成功后才返回成功；Lua 发现任一索引缺失时返回明确错误，不从 0 创建热度。
+投票 Lua 依赖创建帖子时写入的 `post:time` 和 `post:score`。创建流程在 MySQL 成功后对 Redis 初始化做有限重试；Lua 发现任一索引缺失时返回明确错误，不从 0 创建热度。持续失败时日志必须携带 `post_id`，由维护重建命令修复。
 
-“MySQL 创建帖子与 Redis 排序索引的跨存储原子性”不是本轮项目描述中的核心能力，不增加新的 Outbox、修复 worker 或对账系统。面试时应把它说明为当前边界，而不是声称所有跨存储写入都已实现强一致。
+“MySQL 创建帖子与 Redis 排序索引的跨存储原子性”不是本轮项目描述中的核心能力，不增加新的帖子 Outbox 或在线对账系统。面试时应把有限重试和显式修复说明为边界，而不是声称所有跨存储写入都已实现强一致。
+
+### 5.9 Redis 派生状态恢复
+
+真实故障实验表明，`FLUSHDB` 后帖子列表、实时票数和版本状态都会丢失。为避免服务带着空索引继续运行，本轮增加最小恢复闭环：
+
+1. Redis 保存 `state:post-vote-index` 状态标记；应用启动时比较 MySQL 活跃帖子数与 Redis time/score 两个索引数量。
+2. 标记为 `rebuilding`、索引数量不一致或 Redis 全量丢失时，应用拒绝启动并提示维护命令。
+3. 运行中的详情查询先检查状态标记和帖子是否存在于 `post:time`；索引缺失不再把不存在的 ZSet 当成 0 票，而是回源 MySQL。列表、发帖和投票对未就绪状态失败关闭。
+4. 维护命令仅在停写并排空 RabbitMQ 后运行；Redis Stream Outbox 非空时命令直接拒绝执行。
+5. 命令分批从 MySQL 重建 `post:time`、`post:score`、`community:*`、`post:voted:*` 和版本 Hash；取消投票仍保留 version tombstone。
+6. 热度按 `createUnix + SUM(direction) * 432` 从最终状态重算，不重放历史增量。
+
+不实现运行期间“发现计数不同就以 MySQL 覆盖 Redis”的自动对账，因为异步消费窗口中 Redis 合法领先于 MySQL，这种对账会回滚新状态。恢复命令也不能找回既未落 MySQL、又因 Redis 持久化损坏而丢失、同时尚未进入 RabbitMQ 的事件。
+
+### 5.10 用户级投票限流
+
+同方向重复提交由投票状态机幂等处理，但用户持续切换方向时每次都会形成真实状态变化，因此入口额外使用 Redis ZSet 精确滑动窗口限流。Key 按 `user_id` 隔离，Lua 原子完成过期记录清理、计数和写入；member 使用“毫秒时间戳 + 128 位随机 nonce”，避免同毫秒请求及多实例之间互相覆盖。限流只挂载在投票路由，默认每个用户每秒最多 10 次请求。
+
+Redis 不可用时限流失败关闭。由于投票状态本身也依赖 Redis，此策略不会额外降低原本可用性。限流只解决单账号短时刷票，不宣称覆盖多账号、设备或注册风控。
 
 ---
 
@@ -709,7 +734,7 @@ convo/
 
 - 实现状态转换、热度、version 和 Stream Outbox 的单脚本原子写入。
 - controller 映射业务错误。
-- 确保现有创建帖子流程正确初始化 time/score 索引；不新增修复 worker。
+- 确保现有创建帖子流程正确初始化 time/score 索引；持续失败由显式维护重建修复，不新增帖子 Outbox worker。
 
 完成定义：
 
@@ -869,7 +894,7 @@ go vet ./...
 
 ## 16. 明确不实现的可靠性扩展
 
-本轮不实现 Redis 全量灾难恢复工具、周期性自动对账、帖子创建 Outbox、Redis Cluster 或跨机房容灾。这些都可以继续完善，但不直接决定当前五条项目描述是否成立。
+本轮只实现停写后的 Redis 派生状态维护重建，不实现在线自动对账、无人值守灾难恢复、帖子创建 Outbox、Redis Cluster 或跨机房容灾。这些都可以继续完善，但不直接决定当前五条项目描述是否成立。
 
 需要掌握的边界是：MySQL 只保存已消费到的最高版本；尚未发布的事件依赖 Redis AOF 与 Stream，已经发布但尚未消费的事件依赖 RabbitMQ 持久化。面试时能准确说明这一点即可，不把灾难恢复系统纳入本轮代码量。
 
