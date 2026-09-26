@@ -6,6 +6,18 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/scut2024hjt/convo/actions/workflows/ci.yml/badge.svg)](https://github.com/scut2024hjt/convo/actions/workflows/ci.yml)
 
+## 30 秒速览
+
+- **是什么**：Go / Gin 的社区论坛后端。注册登录、帖子与分页是基础功能；项目重点是**投票写链路**的正确性，而不是 CRUD 本身。
+- **写链路**：`Redis Lua → Redis Stream Outbox → Relay → RabbitMQ → Consumer → MySQL`
+  （完整图见 [架构](#架构)，一次投票的时序见 [投票写链路](#投票写链路)）
+- **三个核心问题**：
+  1. **并发原子性**：一次投票要同时改投票方向、帖子热度、事件版本并生成持久化事件，全部放进同一段 Lua 原子执行；
+  2. **重复与乱序**：异步链路按至少一次投递处理，Consumer 用 `event_id` 幂等 + 单调 `version` 防止旧事件覆盖新状态；
+  3. **Redis 状态恢复**：投票状态是可重建的派生状态，在维护窗口内先排空异步链路、再从 MySQL 分批重建。
+- **一致性边界**：实现的是**最终一致 + 至少一次投递下的幂等处理**，不宣称 Exactly Once 或分布式强一致；投票接口返回成功只表示 Redis 实时状态与对应持久化事件已原子提交，**不表示 MySQL 已持久化**。
+- **从哪看起**：[核心设计](#核心设计) → [投票一致性设计](#投票一致性设计) → [一致性与故障边界](#一致性与故障边界)；想直接跑起来看 [快速开始](#快速开始)，验收脚本见 [测试与验证](#测试与验证)。
+
 项目提供用户注册登录、帖子发布与查询、投票、按时间或热度分页等基础论坛功能。投票链路采用 **Redis 实时状态 + Redis Stream Outbox + RabbitMQ 异步持久化 + MySQL 最终状态** 的设计：HTTP 请求不同步等待 MySQL 写入，同时通过消费幂等、事件版本控制、重试与死信处理异步链路中的重复、乱序和失败场景。
 
 Redis 中与投票相关的状态被视为**可重建的派生状态**；当 Redis 状态丢失或不完整时，项目通过显式维护流程从 MySQL 重建，而不是在在线状态下直接覆盖 Redis。
