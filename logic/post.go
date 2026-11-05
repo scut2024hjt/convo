@@ -84,7 +84,7 @@ func GetPostById(pid int64) (data *models.ApiPostDetail, err error) {
 		}
 	} else {
 		data = &models.ApiPostDetail{
-			AuthorName: cached.AuthorName, Post: cached.Post, CommunityDetail: cached.CommunityDetail,
+			AuthorName: cached.AuthorName, AuthorIDStr: strconv.FormatInt(cached.AuthorID, 10), Post: cached.Post, CommunityDetail: cached.CommunityDetail,
 		}
 	}
 
@@ -156,6 +156,7 @@ func GetPostList(page, size int64) (data []*models.ApiPostDetail, err error) {
 		}
 		postDetail := &models.ApiPostDetail{
 			AuthorName:      user.Username,
+			AuthorIDStr:     strconv.FormatInt(post.AuthorID, 10),
 			Post:            post,
 			CommunityDetail: community,
 		}
@@ -229,6 +230,7 @@ func buildPostDetails(posts []*models.Post, ids []string) (data []*models.ApiPos
 		}
 		postDetail := &models.ApiPostDetail{
 			AuthorName:      userName,
+			AuthorIDStr:     strconv.FormatInt(post.AuthorID, 10),
 			VoteNum:         voteNum,
 			Post:            post,
 			CommunityDetail: community,
@@ -279,6 +281,7 @@ func GetPostListTwo(p *models.ParamsPostList) (data []*models.ApiPostDetail, err
 	// 	}
 	// 	postDetail := &models.ApiPostDetail{
 	// 		AuthorName:      user.Username,
+	// AuthorIDStr:     strconv.FormatInt(post.AuthorID, 10),
 	// 		VoteNum:         voteData[idx],
 	// 		Post:            post,
 	// 		CommunityDetail: community,
@@ -332,6 +335,7 @@ func GetCommunityPostListHandler(p *models.ParamsPostList) (data []*models.ApiPo
 	// 	}
 	// 	postDetail := &models.ApiPostDetail{
 	// 		AuthorName:      user.Username,
+	// AuthorIDStr:     strconv.FormatInt(post.AuthorID, 10),
 	// 		VoteNum:         voteData[idx],
 	// 		Post:            post,
 	// 		CommunityDetail: community,

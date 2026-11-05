@@ -7,6 +7,7 @@ import (
 
 	redisdao "github.com/scut2024hjt/convo/dao/redis"
 	"github.com/scut2024hjt/convo/mq"
+	"github.com/scut2024hjt/convo/observability"
 	"github.com/scut2024hjt/convo/settings"
 	"go.uber.org/zap"
 )
@@ -73,12 +74,15 @@ func publishVoteMessages(ctx context.Context, client *mq.Client, messages []*red
 			return waitForRetry(ctx)
 		}
 		if err = client.Publish(ctx, settings.Conf.RabbitMQConfig.Exchange, body, message.Event.EventID, nil); err != nil {
+			observability.RecordRelay("failed")
 			zap.L().Error("publish vote event failed",
 				zap.String("event_id", message.Event.EventID),
 				zap.Error(err),
 			)
 			return waitForRetry(ctx)
 		}
+		observability.RecordRelay("confirmed")
+		zap.L().Info("vote event published", zap.String("event_id", message.Event.EventID))
 		if err = redisdao.AckVoteOutbox(message.StreamID); err != nil {
 			// Publishing twice is safe: MySQL deduplicates by event_id.
 			zap.L().Error("ack vote outbox failed",

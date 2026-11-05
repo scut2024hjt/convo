@@ -17,6 +17,7 @@ const (
 	CodeForbidden
 	CodeAuthUnavailable
 	CodeTooManyRequests
+	CodeSelfFollow
 )
 
 var codeMsgMap = map[ResCode]string{
@@ -33,6 +34,7 @@ var codeMsgMap = map[ResCode]string{
 	CodeForbidden:       "无权执行该操作",
 	CodeAuthUnavailable: "认证服务暂不可用",
 	CodeTooManyRequests: "请求过于频繁",
+	CodeSelfFollow:      "不能关注自己",
 }
 
 func (rc ResCode) Msg() string {

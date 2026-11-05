@@ -1,0 +1,17 @@
+groups:
+  - name: convo-vote
+    rules:
+      - alert: ConvoVoteOutboxBacklog
+        expr: convo_vote_outbox_oldest_age_seconds > 30 and on() (convo_vote_outbox_sample_ok == 1)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Oldest unpublished vote has been waiting over 30 seconds
+      - alert: ConvoOutboxSamplerFailed
+        expr: convo_vote_outbox_sample_ok == 0 or (time() - convo_vote_outbox_last_success_timestamp_seconds > 20)
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis outbox metrics are missing or stale

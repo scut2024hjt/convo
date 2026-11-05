@@ -60,5 +60,8 @@ func PostVoteHandler(c *gin.Context) {
 		ResponseError(c, CodeServerBusy)
 		return
 	}
+	if !result.Changed {
+		c.Set("convo_vote_unchanged", true)
+	}
 	ResponseSuccess(c, result)
 }

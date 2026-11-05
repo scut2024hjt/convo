@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
     ports:
-      - "36379:6379"
+      - "${CONVO_BIND_HOST:-0.0.0.0}:${CONVO_REDIS_PUBLISH_PORT:-36379}:6379"
     volumes:
       - redis_data:/data
 
@@ -12,7 +12,7 @@ services:
     image: mysql:8.0
     restart: unless-stopped
     ports:
-      - "33306:3306"
+      - "${CONVO_BIND_HOST:-0.0.0.0}:${CONVO_MYSQL_PUBLISH_PORT:-33306}:3306"
     command:
       - --default-authentication-plugin=mysql_native_password
       - --character-set-server=utf8mb4
@@ -29,13 +29,14 @@ services:
     image: rabbitmq:3.13-management-alpine
     restart: unless-stopped
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "${CONVO_BIND_HOST:-0.0.0.0}:${CONVO_RABBIT_PUBLISH_PORT:-5672}:5672"
+      - "${CONVO_BIND_HOST:-0.0.0.0}:${CONVO_RABBIT_UI_PORT:-15672}:15672"
     environment:
       RABBITMQ_DEFAULT_USER: convo
       RABBITMQ_DEFAULT_PASS: convo
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./monitoring/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
 
   convo_app:
     build:
@@ -58,8 +59,11 @@ services:
       CONVO_RABBITMQ_URL: amqp://convo:convo@rabbitmq:5672/
       CONVO_AUTH_JWT_SECRET: local-compose-secret-change-before-production
       CONVO_SNOWFLAKE_MACHINE_ID: "1"
+      CONVO_METRICS_ADDR: "0.0.0.0:9091"
+    expose:
+      - "9091"
     ports:
-      - "9090:9090"
+      - "${CONVO_BIND_HOST:-0.0.0.0}:${CONVO_APP_PUBLISH_PORT:-9090}:9090"
 
 volumes:
   mysql_data:

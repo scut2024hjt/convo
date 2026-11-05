@@ -1,3 +1,10 @@
+FROM node:22-alpine AS web-builder
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM golang:1.22-alpine AS builder
 
 # Go module 代理。默认官方源；国内网络可覆盖成 goproxy.cn 之类的国内镜像，
@@ -22,6 +29,7 @@ COPY --from=builder /out/convo_rebuild_redis ./convo_rebuild_redis
 COPY wait-for.sh ./wait-for.sh
 COPY templates ./templates
 COPY static ./static
+COPY --from=web-builder /src/web/dist ./web/dist
 COPY conf ./conf
 RUN chmod 755 ./convo_app ./convo_rebuild_redis ./wait-for.sh
 

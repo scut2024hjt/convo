@@ -1,0 +1,9 @@
+.git
+.gitignore
+.github
+*.log
+web/node_modules
+web/dist
+**/__pycache__
+**/*.pyc
+*.zip

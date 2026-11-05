@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +53,8 @@ func GetPostDetailByID(postID int64) (*models.ApiPostDetail, error) {
 		return nil, err
 	}
 	return &models.ApiPostDetail{
-		AuthorName: row.AuthorName,
+		AuthorName:  row.AuthorName,
+		AuthorIDStr: strconv.FormatInt(row.AuthorID, 10),
 		Post: &models.Post{
 			ID: row.PostID, AuthorID: row.AuthorID, CommunityID: row.CommunityID,
 			Status: row.Status, Title: row.Title, Content: row.Content,

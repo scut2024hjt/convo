@@ -54,3 +54,7 @@ cd ../.. && ./scripts/fault_test.sh
 `5672` 落在 Hyper-V 保留端口段里，Docker 无法把它发布到宿主，所以改成 `35672`。
 **项目本身的 `docker-compose.yaml` 没有被这个环境妥协** —— override 是本地文件，
 已加入 `.gitignore`，不会进入仓库。
+
+## Phase 1 · Feed / 监控 / 独立压测
+
+新增 `scripts/phase1/`，包括固定种子 SQL 夹具、API 功能断言、Feed 压测、真实投票流量和仅读时拉取的读写混合基线。**仅限隔离的本地 Compose 项目**；详细准备、参数、停止/恢复和清理步骤见 [`docs/PHASE1_HANDOFF.md`](../docs/PHASE1_HANDOFF.md)。

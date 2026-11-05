@@ -17,6 +17,7 @@ import (
 	"github.com/scut2024hjt/convo/logger"
 	"github.com/scut2024hjt/convo/logic"
 	"github.com/scut2024hjt/convo/mq"
+	"github.com/scut2024hjt/convo/observability"
 	"github.com/scut2024hjt/convo/pkg/snowflake"
 	"github.com/scut2024hjt/convo/router"
 	"github.com/scut2024hjt/convo/settings"
@@ -104,6 +105,38 @@ func main() {
 		defer workerGroup.Done()
 		worker.RunVoteConsumer(workerCtx, mqClient, "vote-db-"+instanceID)
 	}()
+	// Metrics have an independent listener so /metrics is never exposed on
+	// the public 9090 app port. The monitoring stack reaches 9091 internally.
+	metricsAddr := os.Getenv("CONVO_METRICS_ADDR")
+	if metricsAddr == "" {
+		metricsAddr = "127.0.0.1:9091"
+	}
+	metricsMux := http.NewServeMux()
+	metricsMux.HandleFunc("/metrics", observability.MetricsHandler)
+	metricsServer := &http.Server{Addr: metricsAddr, Handler: metricsMux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			zap.L().Error("metrics listener failed", zap.Error(err))
+		}
+	}()
+	// Only one instance per Redis database may sample global outbox gauges.
+	// Set CONVO_METRICS_SAMPLE_OUTBOX=false on additional instances.
+	if os.Getenv("CONVO_METRICS_SAMPLE_OUTBOX") != "false" {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				if err := redis.SampleOutbox(); err != nil {
+					zap.L().Warn("outbox metric sample failed", zap.Error(err))
+				}
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	// 5. 注册路由
 	r := router.Setup()
 	// 6. 启动服务（优雅关机）
@@ -139,6 +172,9 @@ func main() {
 		zap.L().Error("Server Shutdown", zap.Error(err))
 	}
 	cancelShutdown()
+	metricsCtx, stopMetrics := context.WithTimeout(context.Background(), 2*time.Second)
+	_ = metricsServer.Shutdown(metricsCtx)
+	stopMetrics()
 	stopWorkers()
 	workersDone := make(chan struct{})
 	go func() {

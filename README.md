@@ -1,5 +1,7 @@
 # convo
 
+> **第一阶段新功能：** [关注流、React 前端、投票链路监控及 Codex 验收手册](docs/PHASE1_HANDOFF.md) · [当前验证结果与待测项](docs/PHASE1_VERIFY_RESULTS.md)。旧版功能和旧入口仍保留。
+
 > 基于 Go / Gin 的社区论坛后端。项目重点围绕投票写链路，处理并发状态更新、异步持久化、重复与乱序消息，以及 Redis 状态恢复。
 
 [![Go](https://img.shields.io/badge/Go-1.20%2B-00ADD8?logo=go&logoColor=white)](https://go.dev)

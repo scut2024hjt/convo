@@ -11,7 +11,7 @@ import (
 var db *sqlx.DB
 
 func Init(cfg *settings.MySQLConfig) (err error) {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True",
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=UTC&time_zone=%%27%%2B00%%3A00%%27",
 		cfg.User,
 		cfg.Password,
 		cfg.Host,

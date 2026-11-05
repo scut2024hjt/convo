@@ -20,7 +20,7 @@ func Setup() *gin.Engine {
 	gin.SetMode(settings.Conf.GinConfig.Mode)
 	// 创建一个路由引擎
 	r := gin.New()
-	r.Use(logger.GinLogger(), logger.GinRecovery(true))
+	r.Use(middlewares.Metrics(), logger.GinLogger(), logger.GinRecovery(true))
 	// 加载静态文件
 	r.LoadHTMLFiles("./templates/index.html")
 	r.Static("/static", "./static")
@@ -28,6 +28,7 @@ func Setup() *gin.Engine {
 	r.GET("/", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "index.html", nil)
 	})
+	registerSPA(r)
 	r.GET("/ping", func(c *gin.Context) {
 		c.String(http.StatusOK, "pong")
 	})
@@ -48,6 +49,10 @@ func Setup() *gin.Engine {
 
 	v1.Use(middlewares.JWTAuthMiddleware())
 	{
+		v1.GET("/feed", controller.GetFeedHandler)
+		v1.PUT("/users/:id/follow", controller.PutFollowHandler)
+		v1.DELETE("/users/:id/follow", controller.DeleteFollowHandler)
+		v1.GET("/users/:id/follow", controller.GetFollowHandler)
 		v1.POST("/post", controller.CreatePostHandler)
 		v1.PUT("/post/:id", controller.UpdatePostHandler)
 		// 投票接口额外挂一层用户级滑动窗口限流，拦短时刷票

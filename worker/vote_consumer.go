@@ -11,6 +11,7 @@ import (
 	mysqldao "github.com/scut2024hjt/convo/dao/mysql"
 	"github.com/scut2024hjt/convo/models"
 	"github.com/scut2024hjt/convo/mq"
+	"github.com/scut2024hjt/convo/observability"
 	"github.com/scut2024hjt/convo/settings"
 	"go.uber.org/zap"
 )
@@ -47,11 +48,15 @@ func handleVoteDelivery(ctx context.Context, client *mq.Client, delivery amqp.De
 
 	status, err := mysqldao.PersistVoteEvent(&event)
 	if err == nil {
+		observability.RecordConsumer(string(status))
+		if status == mysqldao.VotePersisted {
+			observability.RecordPersistLatency(event.OccurredAt)
+		}
 		if ackErr := delivery.Ack(false); ackErr != nil {
 			zap.L().Error("ack consumed vote failed", zap.String("event_id", event.EventID), zap.Error(ackErr))
 			return
 		}
-		zap.L().Debug("vote event consumed",
+		zap.L().Info("vote event consumed",
 			zap.String("event_id", event.EventID),
 			zap.String("status", string(status)),
 		)
@@ -76,6 +81,7 @@ func retryVoteDelivery(ctx context.Context, client *mq.Client, delivery amqp.Del
 		_ = delivery.Nack(false, true)
 		return
 	}
+	observability.RecordConsumer("retry")
 	if err := delivery.Ack(false); err != nil {
 		zap.L().Error("ack vote after retry publish failed", zap.String("event_id", eventID), zap.Error(err))
 	}
@@ -91,6 +97,7 @@ func moveToDeadLetter(ctx context.Context, client *mq.Client, delivery amqp.Deli
 		_ = delivery.Nack(false, true)
 		return
 	}
+	observability.RecordConsumer("dlq")
 	if err := delivery.Ack(false); err != nil {
 		zap.L().Error("ack vote after dead-letter publish failed", zap.String("event_id", eventID), zap.Error(err))
 	}

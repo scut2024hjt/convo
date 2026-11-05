@@ -115,3 +115,11 @@ go.work
 # 本机特定的 compose 覆盖（5672 被 Windows 保留端口段占用，改映射到 35672）
 # Docker Compose 会自动加载，见 README
 docker-compose.override.yaml
+
+# React frontend artifacts
+web/node_modules/
+web/dist/
+
+# Python test script cache
+__pycache__/
+*.pyc

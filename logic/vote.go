@@ -27,11 +27,16 @@ func VoteForPost(userID int64, p *models.ParamsVoteData) (*models.VoteResult, er
 		zap.Int64("userID", userID),
 		zap.Int64("postID", p.PostID),
 		zap.Int8("direction", p.Direction))
-	return redis.VoteForPost(
+	eventID := strconv.FormatInt(snowflake.GenID(), 10)
+	result, err := redis.VoteForPost(
 		strconv.FormatInt(userID, 10),
 		strconv.FormatInt(p.PostID, 10),
 		p.Direction,
-		strconv.FormatInt(snowflake.GenID(), 10),
+		eventID,
 		time.Now().Unix(),
 	)
+	if err == nil && result.Changed {
+		zap.L().Info("vote event created", zap.String("event_id", eventID), zap.Int64("version", result.Version))
+	}
+	return result, err
 }
