@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -23,36 +24,26 @@ var (
 	ErrForbidden    = errors.New("post can only be edited by its author")
 )
 
-func CreatePost(p *models.Post) (err error) {
-	if err = redis.EnsureVoteStateReadable(); err != nil {
-		return fmt.Errorf("redis post index is unavailable: %w", err)
+// CreatePost commits the post, immutable event and both projection tasks as
+// one unit. Redis remains necessary for JWT sessions and the existing vote
+// state readiness guard; HTTP success no longer waits for indexing/fanout.
+func CreatePost(p *models.Post) error { return CreatePostWithContext(context.Background(), p) }
+
+func CreatePostWithContext(ctx context.Context, p *models.Post) error {
+	if err := redis.EnsureVoteStateReadable(); err != nil {
+		return fmt.Errorf("redis post/vote state unavailable: %w", err)
 	}
-	// 1. 生成 post_id
 	p.ID = snowflake.GenID()
-	// 2. 保存到数据库
-	err = mysql.CreatePost(p)
-	if err != nil {
-		return
+	eventID := snowflake.GenID()
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := mysql.CreatePostWithDelivery(dbCtx, p, eventID); err != nil {
+		return err
 	}
-	const maxAttempts = 3
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err = redis.CreatePost(p.ID, p.CommunityID)
-		if err == nil {
-			return nil
-		}
-		zap.L().Error("initialize post redis indexes failed",
-			zap.Int64("post_id", p.ID),
-			zap.Int("attempt", attempt),
-			zap.Error(err),
-		)
-		if attempt < maxAttempts {
-			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
-		}
-	}
-	// The MySQL row is deliberately retained: deleting it after an ambiguous
-	// Redis timeout could create the opposite orphan. Startup validation and
-	// the offline rebuild command provide a deterministic repair path.
-	return fmt.Errorf("post %d was stored in mysql but redis index initialization failed; run the offline redis rebuild: %w", p.ID, err)
+	zap.L().Info("post publication committed",
+		zap.Int64("post_id", p.ID), zap.Int64("event_id", eventID),
+		zap.String("projection", "index,fanout"))
+	return nil
 }
 
 // GetPostById 根据帖子 id 查询帖子详情数据

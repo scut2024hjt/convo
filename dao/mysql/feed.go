@@ -80,3 +80,43 @@ func FeedPosts(followerID int64, limit int, beforeTime *time.Time, beforeID int6
 	}
 	return items, nil
 }
+
+// PushFeedPosts reads only the caller's inbox and joins current follow edges
+// and visibility, rather than trusting membership from the delivery moment.
+// All metadata is returned in a single query (no N+1).
+func PushFeedPosts(recipientID int64, limit int, before *time.Time, beforeID int64) ([]models.FeedItem, error) {
+	query := `SELECT p.post_id,p.author_id,u.username AS author_name,p.title,p.create_time,
+        c.community_id,c.community_name FROM feed_inbox i
+        JOIN post p ON p.post_id=i.post_id AND p.status=1
+        JOIN user_follow f ON f.follower_id=i.recipient_id AND f.followee_id=p.author_id
+        JOIN user u ON u.user_id=p.author_id
+        JOIN community c ON c.community_id=p.community_id
+        WHERE i.recipient_id=?`
+	args := []interface{}{recipientID}
+	if before != nil {
+		query += ` AND (i.create_time<FROM_UNIXTIME(?) OR (i.create_time=FROM_UNIXTIME(?) AND i.post_id<?))`
+		args = append(args, before.Unix(), before.Unix(), beforeID)
+	}
+	query += ` ORDER BY i.create_time DESC,i.post_id DESC LIMIT ?`
+	args = append(args, limit)
+	type row struct {
+		PostID        int64     `db:"post_id"`
+		AuthorID      int64     `db:"author_id"`
+		AuthorName    string    `db:"author_name"`
+		Title         string    `db:"title"`
+		CreateTime    time.Time `db:"create_time"`
+		CommunityID   int64     `db:"community_id"`
+		CommunityName string    `db:"community_name"`
+	}
+	rows := make([]row, 0, limit)
+	if err := db.Select(&rows, query, args...); err != nil {
+		return nil, err
+	}
+	items := make([]models.FeedItem, 0, len(rows))
+	for _, p := range rows {
+		items = append(items, models.FeedItem{ID: strconv.FormatInt(p.PostID, 10), AuthorID: strconv.FormatInt(p.AuthorID, 10),
+			AuthorName: p.AuthorName, Title: p.Title, CreateTime: p.CreateTime,
+			Community: models.FeedCommunity{ID: strconv.FormatInt(p.CommunityID, 10), Name: p.CommunityName}})
+	}
+	return items, nil
+}

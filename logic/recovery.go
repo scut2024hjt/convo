@@ -1,8 +1,10 @@
 package logic
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/scut2024hjt/convo/dao/mysql"
 	"github.com/scut2024hjt/convo/dao/redis"
@@ -19,6 +21,13 @@ type RedisRebuildReport struct {
 // rebuilt post index. It does not attempt an online repair because MySQL may be
 // temporarily behind Redis while RabbitMQ still has vote events in flight.
 func EnsureRedisStateReady() error {
+	status, err := redis.GetVoteStateStatus()
+	if err != nil {
+		return fmt.Errorf("read redis state marker: %w", err)
+	}
+	if status != "" && status != redis.VoteStateReady {
+		return fmt.Errorf("%w: redis marker=%q; offline rebuild required", ErrRedisStateNeedsRebuild, status)
+	}
 	databasePosts, err := mysql.CountActivePosts()
 	if err != nil {
 		return fmt.Errorf("count mysql posts: %w", err)
@@ -27,24 +36,49 @@ func EnsureRedisStateReady() error {
 	if err != nil {
 		return fmt.Errorf("count redis posts: %w", err)
 	}
-	status, err := redis.GetVoteStateStatus()
+	// A count difference is legitimate only when *every* missing post has an
+	// unfinished persisted index task. Scan also catches mismatched IDs with
+	// equal counts; never infer health from counts alone.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pending, err := mysql.UnfinishedIndexPostIDs(ctx)
 	if err != nil {
-		return fmt.Errorf("read redis state marker: %w", err)
+		return fmt.Errorf("read unfinished index tasks: %w", err)
 	}
-
-	if status == "" && databasePosts == indexedPosts {
-		// Upgrade path for a healthy v2 deployment and initialization for an
-		// empty fresh database.
-		if err = redis.MarkVoteStateReady(); err != nil {
-			return fmt.Errorf("initialize redis state marker: %w", err)
+	var present, missing int64
+	var after int64
+	for {
+		ids, readErr := mysql.ReadActivePostIDs(ctx, after, 500)
+		if readErr != nil {
+			return fmt.Errorf("scan active posts: %w", readErr)
 		}
-		return nil
+		if len(ids) == 0 {
+			break
+		}
+		absent, checkErr := redis.MissingPublishedPostIndexes(ctx, ids)
+		if checkErr != nil {
+			return fmt.Errorf("check redis post index membership: %w", checkErr)
+		}
+		for _, postID := range ids {
+			if absent[postID] {
+				if !pending[postID] {
+					return fmt.Errorf("%w: active post %d lacks indexes and has no runnable index projection", ErrRedisStateNeedsRebuild, postID)
+				}
+				missing++
+			} else {
+				present++
+			}
+		}
+		after = ids[len(ids)-1]
 	}
-	if status != redis.VoteStateReady || databasePosts != indexedPosts {
-		return fmt.Errorf(
-			"%w: marker=%q mysql_posts=%d redis_posts=%d; stop writers, drain RabbitMQ and run convo_rebuild_redis --confirm-maintenance",
-			ErrRedisStateNeedsRebuild, status, databasePosts, indexedPosts,
-		)
+	if present+missing != databasePosts || present != indexedPosts {
+		return fmt.Errorf("%w: mysql=%d redis=%d verified=%d pending_missing=%d; offline rebuild required",
+			ErrRedisStateNeedsRebuild, databasePosts, indexedPosts, present, missing)
+	}
+	if status == "" {
+		if err = redis.MarkVoteStateReady(); err != nil {
+			return fmt.Errorf("mark redis state ready: %w", err)
+		}
 	}
 	return nil
 }

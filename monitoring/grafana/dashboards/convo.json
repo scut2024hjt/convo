@@ -454,6 +454,126 @@
           "unit": "reqps"
         }
       }
+    },
+    {
+      "type": "timeseries",
+      "description": "One sampler per MySQL database; sample_ok=0 means stale/not collected.",
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 16,
+      "title": "Content tasks by state",
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "convo_content_task_state",
+          "legendFormat": "{{kind}} / {{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "description": "One sampler per MySQL database; sample_ok=0 means stale/not collected.",
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 17,
+      "title": "Oldest unfinished content task (seconds)",
+      "gridPos": {
+        "x": 0,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "convo_content_oldest_unfinished_seconds",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "description": "One sampler per MySQL database; sample_ok=0 means stale/not collected.",
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 18,
+      "title": "Content task outcomes (rate)",
+      "gridPos": {
+        "x": 12,
+        "y": 64,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by(kind,result)(rate(convo_content_projection_total[5m]))",
+          "legendFormat": "{{kind}} / {{result}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "description": "One sampler per MySQL database; sample_ok=0 means stale/not collected.",
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 19,
+      "title": "New Feed inbox entries (per second)",
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "rate(convo_content_delivered_total[5m])",
+          "legendFormat": "inbox insert rate"
+        }
+      ]
     }
   ],
   "tags": [

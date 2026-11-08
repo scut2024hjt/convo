@@ -41,13 +41,13 @@ func CreatePostHandler(c *gin.Context) {
 		Title: params.Title, Content: params.Content,
 	}
 	// 2. 创建帖子
-	if err := logic.CreatePost(p); err != nil {
+	if err := logic.CreatePostWithContext(c.Request.Context(), p); err != nil {
 		zap.L().Error("logic.CreatePost failed", zap.Error(err))
 		ResponseError(c, CodeServerBusy)
 		return
 	}
 	// 3. 返回响应
-	ResponseSuccess(c, gin.H{"post_id": strconv.FormatInt(p.ID, 10)})
+	ResponseSuccess(c, gin.H{"post_id": strconv.FormatInt(p.ID, 10), "distribution": "async"})
 }
 
 // GetPostDetailHandler 获取帖子详情的处理函数

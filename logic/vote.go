@@ -1,6 +1,9 @@
 package logic
 
 import (
+	"context"
+	"errors"
+	"github.com/scut2024hjt/convo/dao/mysql"
 	"strconv"
 	"time"
 
@@ -17,6 +20,8 @@ import (
 // 1. 判断投票的限制
 // 2. 更新帖子的分数
 // 3. 记录用户为该帖子投票的分数
+
+var ErrPostIndexPending = errors.New("post index pending projection")
 
 // VoteForPost 为帖子投票的函数
 func VoteForPost(userID int64, p *models.ParamsVoteData) (*models.VoteResult, error) {
@@ -35,6 +40,17 @@ func VoteForPost(userID int64, p *models.ParamsVoteData) (*models.VoteResult, er
 		eventID,
 		time.Now().Unix(),
 	)
+	if errors.Is(err, redis.ErrPostNotInitialized) {
+		lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		pending, lookupErr := mysql.IsPostIndexPending(lookupCtx, p.PostID)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if pending {
+			return nil, ErrPostIndexPending
+		}
+	}
 	if err == nil && result.Changed {
 		zap.L().Info("vote event created", zap.String("event_id", eventID), zap.Int64("version", result.Version))
 	}

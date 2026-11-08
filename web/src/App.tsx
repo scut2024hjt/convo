@@ -220,7 +220,7 @@ function PostDetail({ postId, api, go, session, onFollowChange }: {
         <button disabled={votePending} className={direction === '-1' ? 'active' : ''} onClick={() => void vote('-1')}>↓ 反对</button>
         <button disabled={votePending} onClick={() => void vote('0')}>撤销</button>
       </div></div>
-      {voteError && <div className="inline-error" role="alert">投票失败：{voteError}（可以重试）</div>}
+      {voteError && <div className="inline-error" role="alert">{voteError.includes('索引正在同步') ? voteError + '。请稍后手动重试，系统不会自动重复提交投票。' : '投票失败：' + voteError + '（可以重试）'}</div>}
       {direction === '?' && <p className="hint">后端当前未提供我的投票方向查询接口；刷新页面不会假设已投方向。</p>}
     </article>}
   </div>;
@@ -255,7 +255,7 @@ function AuthForm({ register, api, setSession, go }: { register: boolean; api: A
     </div></div>;
 }
 
-function NewPost({ api, go }: { api: ApiFn; go: Navigate }) {
+function NewPost({ api, go, onPublished }: { api: ApiFn; go: Navigate; onPublished: (id: string) => void }) {
   const [communities, setCommunities] = useState<Community[]>([]);
   const [communityId, setCommunityId] = useState('');
   const [title, setTitle] = useState('');
@@ -274,7 +274,10 @@ function NewPost({ api, go }: { api: ApiFn; go: Navigate }) {
     }
     setPending(true);
     try {
-      const result = await api<{ post_id: string }>('/post', 'POST', { community_id: Number(communityId), title, content });
+      const result = await api<{ post_id: string; distribution?: string }>('/post', 'POST', { community_id: Number(communityId), title, content });
+      // Do not resubmit on delayed projections: this response means the DB
+      // transaction committed, not that Redis/Feed projections are ready.
+      if (result.distribution === 'async') onPublished(result.post_id);
       go(`/post/${encodeURIComponent(result.post_id)}`);
     } catch (err) { setError((err as Error).message); }
     finally { setPending(false); }
@@ -359,7 +362,7 @@ export default function App() {
     <main key={`${authEpoch}:${route}`} className="main">
       {(route === '/login' || route === '/register') ? <AuthForm register={route === '/register'} api={api} setSession={setSession} go={go} /> :
       needsSession && !session ? <div className="empty-state"><h2>需要登录才能继续</h2><NavigateButton go={go} to="/login" className="button primary">去登录</NavigateButton></div> :
-      route === '/new' ? <NewPost api={api} go={go} /> :
+      route === '/new' ? <NewPost api={api} go={go} onPublished={() => setNotice('帖子已保存。内容索引和关注分发正在后台处理，首页与关注流可能稍后才出现；现在投票若提示同步中，请稍后手动重试。')} /> :
       isPost ? <PostDetail postId={route.split('/')[2]} api={api} go={go} session={session} onFollowChange={onFollowChange} /> :
       route === '/feed' ? <Feed api={api} go={go} refresh={refresh} /> :
       route === '/hot' || route === '/' ? <div className="home-grid"><section><div className="hero"><span className="eyebrow">AN OPEN SPACE FOR IDEAS</span><h1>每一个想法，<br/><em>都值得交流。</em></h1><p>发现值得思考的讨论，和好奇的人一起拓展视野。</p></div><PostList mode={route === '/hot' ? 'hot' : 'latest'} api={api} go={go} session={session} refresh={refresh} /></section>
