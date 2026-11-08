@@ -1,0 +1,39 @@
+{
+  "prepared_date": "2026-11-08",
+  "script_sha256": "a6a4f49868119aaaf545215e0dc2715e09c86153e37d03b694e3998d2b534281",
+  "source_snapshot_id": "t01-verified-b1c911989f049f65",
+  "source_files": 163,
+  "results": [
+    {
+      "scenario": "original 161-file delivery with connect/sendto forced ENETUNREACH",
+      "result": "pass",
+      "source_files": 163,
+      "input_unchanged": true
+    },
+    {
+      "scenario": "network syscall audit over Python and Git subprocesses",
+      "result": "pass",
+      "IP_socket_calls": 0
+    },
+    {
+      "scenario": "repeat execution on verified output",
+      "result": "pass"
+    },
+    {
+      "scenario": "already accepted 163-file source as input",
+      "result": "pass"
+    },
+    {
+      "scenario": "partially repaired source with one existing new file",
+      "result": "pass"
+    },
+    {
+      "scenario": "unknown modified source rejected before output creation",
+      "result": "pass",
+      "input_unchanged": true
+    }
+  ],
+  "work_directory": "/tmp/convo-t02-offline-test-py8kzk3i",
+  "network_trace": "/tmp/convo-t02-offline-test-py8kzk3i/network-denied.strace",
+  "business_implementation": "T02 not implemented; handoff repair only"
+}
