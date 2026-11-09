@@ -11,16 +11,17 @@ import (
 var Conf = new(Config)
 
 type Config struct {
-	*AppConfig       `mapstructure:"app"`
-	*LogConfig       `mapstructure:"log"`
-	*MySQLConfig     `mapstructure:"mysql"`
-	*RedisConfig     `mapstructure:"redis"`
-	*SnowFlakeConfig `mapstructure:"snowflake"`
-	*GinConfig       `mapstructure:"gin"`
-	*AuthConfig      `mapstructure:"auth"`
-	*RabbitMQConfig  `mapstructure:"rabbitmq"`
-	*CacheConfig     `mapstructure:"cache"`
-	*RateLimitConfig `mapstructure:"ratelimit"`
+	*AppConfig             `mapstructure:"app"`
+	*LogConfig             `mapstructure:"log"`
+	*MySQLConfig           `mapstructure:"mysql"`
+	*RedisConfig           `mapstructure:"redis"`
+	*SnowFlakeConfig       `mapstructure:"snowflake"`
+	*GinConfig             `mapstructure:"gin"`
+	*AuthConfig            `mapstructure:"auth"`
+	*RabbitMQConfig        `mapstructure:"rabbitmq"`
+	*CacheConfig           `mapstructure:"cache"`
+	*RateLimitConfig       `mapstructure:"ratelimit"`
+	*ContentDeliveryConfig `mapstructure:"content_delivery"`
 }
 
 type AppConfig struct {
@@ -91,7 +92,38 @@ type RateLimitConfig struct {
 	VoteRateLimitMaxRequests        int64 `mapstructure:"vote_max_requests"`
 }
 
+// ContentDeliveryConfig are conservative development defaults, not production
+// throughput guarantees. Keep a finite processing budget below lease expiry.
+type ContentDeliveryConfig struct {
+	PollMilliseconds  int `mapstructure:"poll_milliseconds"`
+	BatchSize         int `mapstructure:"batch_size"`
+	LeaseSeconds      int `mapstructure:"lease_seconds"`
+	IOTimeoutSeconds  int `mapstructure:"io_timeout_seconds"`
+	TaskBudgetSeconds int `mapstructure:"task_budget_seconds"`
+	MaxAttempts       int `mapstructure:"max_attempts"`
+	MaxBackoffSeconds int `mapstructure:"max_backoff_seconds"`
+	IndexWorkers      int `mapstructure:"index_workers"`
+	FanoutWorkers     int `mapstructure:"fanout_workers"`
+	BackfillWorkers   int `mapstructure:"backfill_workers"`
+	CleanupWorkers    int `mapstructure:"cleanup_workers"`
+}
+
 func Init() (err error) {
+	for key, value := range map[string]interface{}{
+		"content_delivery.poll_milliseconds":   500,
+		"content_delivery.batch_size":          100,
+		"content_delivery.lease_seconds":       15,
+		"content_delivery.io_timeout_seconds":  5,
+		"content_delivery.task_budget_seconds": 10,
+		"content_delivery.max_attempts":        12,
+		"content_delivery.max_backoff_seconds": 60,
+		"content_delivery.index_workers":       1,
+		"content_delivery.fanout_workers":      1,
+		"content_delivery.backfill_workers":    1,
+		"content_delivery.cleanup_workers":     1,
+	} {
+		viper.SetDefault(key, value)
+	}
 	viper.SetConfigName("config") // 指定配置文件名称（不需要带后缀）
 	viper.SetConfigType("yaml")   // 指定配置文件类型
 	viper.SetEnvPrefix("CONVO")
@@ -107,6 +139,12 @@ func Init() (err error) {
 		"auth.jwt_secret", "auth.jwt_expire", "snowflake.machine_id",
 		"cache.post_detail_ttl_seconds", "cache.delayed_delete_milliseconds",
 		"ratelimit.vote_window_milliseconds", "ratelimit.vote_max_requests",
+		"content_delivery.poll_milliseconds", "content_delivery.batch_size",
+		"content_delivery.lease_seconds", "content_delivery.io_timeout_seconds",
+		"content_delivery.task_budget_seconds", "content_delivery.max_attempts",
+		"content_delivery.max_backoff_seconds", "content_delivery.index_workers",
+		"content_delivery.fanout_workers",
+		"content_delivery.backfill_workers", "content_delivery.cleanup_workers",
 	} {
 		if bindErr := viper.BindEnv(key); bindErr != nil {
 			return bindErr
@@ -131,7 +169,7 @@ func (config *Config) Validate() error {
 	if config.AppConfig == nil || config.MySQLConfig == nil || config.RedisConfig == nil ||
 		config.SnowFlakeConfig == nil || config.GinConfig == nil || config.LogConfig == nil ||
 		config.AuthConfig == nil || config.RabbitMQConfig == nil || config.CacheConfig == nil ||
-		config.RateLimitConfig == nil {
+		config.RateLimitConfig == nil || config.ContentDeliveryConfig == nil {
 		return fmt.Errorf("required config section is missing")
 	}
 	if config.JwtExpire <= 0 || strings.TrimSpace(config.JwtSecret) == "" {
@@ -155,6 +193,15 @@ func (config *Config) Validate() error {
 	}
 	if config.VoteRateLimitWindowMilliseconds <= 0 || config.VoteRateLimitMaxRequests <= 0 {
 		return fmt.Errorf("ratelimit window and max requests must be positive")
+	}
+	c := config.ContentDeliveryConfig
+	if c.PollMilliseconds < 50 || c.BatchSize < 1 || c.BatchSize > 1000 ||
+		c.LeaseSeconds < 3 || c.IOTimeoutSeconds < 1 || c.TaskBudgetSeconds < 1 ||
+		c.IOTimeoutSeconds >= c.LeaseSeconds || c.TaskBudgetSeconds >= c.LeaseSeconds ||
+		c.MaxAttempts < 1 || c.MaxBackoffSeconds < 1 ||
+		c.IndexWorkers < 1 || c.IndexWorkers > 16 || c.FanoutWorkers < 1 || c.FanoutWorkers > 16 ||
+		c.BackfillWorkers < 1 || c.BackfillWorkers > 16 || c.CleanupWorkers < 1 || c.CleanupWorkers > 16 {
+		return fmt.Errorf("content_delivery: invalid worker, lease or batch configuration")
 	}
 	return nil
 }

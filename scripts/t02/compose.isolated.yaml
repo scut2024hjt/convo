@@ -1,0 +1,12 @@
+# Only for a UNIQUE Compose project with dedicated volumes and host ports.
+# Build the SQL with scripts/t02/prepare_isolated_sql.py first.
+services:
+  mysql8019:
+    environment:
+      MYSQL_DATABASE: convo_t02
+    volumes:
+      - ${CONVO_T02_INIT_SQL:?Generate T02 init SQL first}:/docker-entrypoint-initdb.d/001-init.sql:ro
+  convo_app:
+    environment:
+      CONVO_MYSQL_DB: convo_t02
+      CONVO_METRICS_SAMPLE_CONTENT: "true"

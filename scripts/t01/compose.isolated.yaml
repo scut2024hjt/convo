@@ -1,0 +1,13 @@
+# Use only with the original docker-compose.yaml and a UNIQUE project name.
+# Required: CONVO_T01_INIT_SQL=/absolute/path/to/generated/t01-init.sql
+# Set CONVO_BIND_HOST=127.0.0.1 and unused host ports in shell before launch.
+services:
+  mysql8019:
+    environment:
+      MYSQL_DATABASE: convo_t01
+    volumes:
+      - ${CONVO_T01_INIT_SQL:?Generate T01 init SQL first}:/docker-entrypoint-initdb.d/001-init.sql:ro
+  convo_app:
+    environment:
+      CONVO_MYSQL_DB: convo_t01
+      CONVO_METRICS_SAMPLE_CONTENT: "true"

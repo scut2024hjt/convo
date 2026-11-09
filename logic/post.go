@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -23,40 +24,41 @@ var (
 	ErrForbidden    = errors.New("post can only be edited by its author")
 )
 
-func CreatePost(p *models.Post) (err error) {
-	if err = redis.EnsureVoteStateReadable(); err != nil {
-		return fmt.Errorf("redis post index is unavailable: %w", err)
+// CreatePost commits the post, immutable event and both projection tasks as
+// one unit. Redis remains necessary for JWT sessions and the existing vote
+// state readiness guard; HTTP success no longer waits for indexing/fanout.
+func CreatePost(p *models.Post) error { return CreatePostWithContext(context.Background(), p) }
+
+func CreatePostWithContext(ctx context.Context, p *models.Post) error {
+	if err := redis.EnsureVoteStateReadable(); err != nil {
+		return fmt.Errorf("redis post/vote state unavailable: %w", err)
 	}
-	// 1. 生成 post_id
 	p.ID = snowflake.GenID()
-	// 2. 保存到数据库
-	err = mysql.CreatePost(p)
-	if err != nil {
-		return
+	eventID := snowflake.GenID()
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := mysql.CreatePostWithDelivery(dbCtx, p, eventID); err != nil {
+		return err
 	}
-	const maxAttempts = 3
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err = redis.CreatePost(p.ID, p.CommunityID)
-		if err == nil {
-			return nil
-		}
-		zap.L().Error("initialize post redis indexes failed",
-			zap.Int64("post_id", p.ID),
-			zap.Int("attempt", attempt),
-			zap.Error(err),
-		)
-		if attempt < maxAttempts {
-			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
-		}
-	}
-	// The MySQL row is deliberately retained: deleting it after an ambiguous
-	// Redis timeout could create the opposite orphan. Startup validation and
-	// the offline rebuild command provide a deterministic repair path.
-	return fmt.Errorf("post %d was stored in mysql but redis index initialization failed; run the offline redis rebuild: %w", p.ID, err)
+	zap.L().Info("post publication committed",
+		zap.Int64("post_id", p.ID), zap.Int64("event_id", eventID),
+		zap.String("projection", "index,fanout"))
+	return nil
 }
 
 // GetPostById 根据帖子 id 查询帖子详情数据
 func GetPostById(pid int64) (data *models.ApiPostDetail, err error) {
+	// Cache hits are never authority for deletion visibility. An unavailable
+	// database fails closed rather than serving an old cached body.
+	checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	visible, checkErr := mysql.PostVisible(checkCtx, pid)
+	cancel()
+	if checkErr != nil {
+		return nil, checkErr
+	}
+	if !visible {
+		return nil, ErrPostNotFound
+	}
 	cached, err := redis.GetPostDetailCache(pid)
 	if err == redis.Nil {
 		data, err = mysql.GetPostDetailByID(pid)
@@ -99,6 +101,27 @@ func GetPostById(pid int64) (data *models.ApiPostDetail, err error) {
 	}
 	data.VoteNum = voteCount
 	return data, nil
+}
+
+// DeletePost creates a durable delete event and both cleanup tasks. HTTP
+// success never waits for Redis or inbox cleanup; read paths filter at source.
+func DeletePost(ctx context.Context, postID, actorID int64) error {
+	opCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	changed, err := mysql.DeletePostWithDelivery(opCtx, postID, actorID, snowflake.GenID())
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrPostNotFound
+	}
+	if errors.Is(err, mysql.ErrDeleteForbidden) {
+		return ErrForbidden
+	}
+	if err != nil {
+		return err
+	}
+	if changed {
+		zap.L().Info("post deletion committed", zap.Int64("post_id", postID), zap.Int64("actor_id", actorID))
+	}
+	return nil
 }
 
 func UpdatePost(postID, authorID int64, params *models.ParamsUpdatePost) error {
@@ -212,8 +235,16 @@ func buildPostDetails(posts []*models.Post, ids []string) (data []*models.ApiPos
 		communityMap[community.ID] = community
 	}
 
+	// Deleted IDs may be filtered by MySQL after Redis's ordered ID lookup;
+	// vote counts must remain bound to ID, not the now-shorter array index.
+	voteByID := make(map[string]int64, len(ids))
+	for i, id := range ids {
+		if i < len(voteData) {
+			voteByID[id] = voteData[i]
+		}
+	}
 	// 将帖子的作者以及分区信息查询出来填充到帖子中
-	for idx, post := range posts {
+	for _, post := range posts {
 		userName, ok := userNameMap[post.AuthorID]
 		if !ok {
 			zap.L().Warn("author info not found", zap.Int64("author_id", post.AuthorID))
@@ -224,10 +255,7 @@ func buildPostDetails(posts []*models.Post, ids []string) (data []*models.ApiPos
 			zap.L().Warn("community info not found", zap.Int64("community_id", post.CommunityID))
 			continue
 		}
-		var voteNum int64
-		if idx < len(voteData) {
-			voteNum = voteData[idx]
-		}
+		voteNum := voteByID[strconv.FormatInt(post.ID, 10)]
 		postDetail := &models.ApiPostDetail{
 			AuthorName:      userName,
 			AuthorIDStr:     strconv.FormatInt(post.AuthorID, 10),

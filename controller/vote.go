@@ -49,6 +49,14 @@ func PostVoteHandler(c *gin.Context) {
 			ResponseError(c, CodeVoteExpired)
 			return
 		}
+		if errors.Is(err, logic.ErrPostNotFound) {
+			ResponseError(c, CodePostNotFound)
+			return
+		}
+		if errors.Is(err, logic.ErrPostIndexPending) {
+			ResponseError(c, CodePostIndexPending)
+			return
+		}
 		if errors.Is(err, redisdao.ErrPostNotInitialized) {
 			ResponseError(c, CodePostNotFound)
 			return

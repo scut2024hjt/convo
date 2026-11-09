@@ -94,7 +94,12 @@ func GetFeedHandler(c *gin.Context) {
 			return
 		}
 	}
-	feed, err := logic.GetFeed(userID, limit, c.Query("cursor"))
+	mode := c.Query("mode")
+	if mode != "" && mode != "pull" && mode != "push" {
+		ResponseError(c, CodeInvalidParam)
+		return
+	}
+	feed, err := logic.GetFeedMode(userID, limit, c.Query("cursor"), mode)
 	if errors.Is(err, logic.ErrInvalidFeedCursor) {
 		ResponseError(c, CodeInvalidParam)
 		return

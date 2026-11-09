@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,5 +82,44 @@ func TestSlowMetricsWriterDoesNotHoldRegistryLock(t *testing.T) {
 	case <-recorded:
 	case <-time.After(300 * time.Millisecond):
 		t.Fatal("business metrics blocked by an in-progress HTTP metrics write")
+	}
+}
+
+func TestT02TaskMetricsBoundedAndSamples(t *testing.T) {
+	for _, kind := range []string{"delete_index", "delete_inbox"} {
+		RecordContentTask(kind, "done", 2*time.Millisecond)
+	}
+	RecordFollowTask("backfill", "canceled", time.Millisecond)
+	RecordFollowTask("cleanup", "done", time.Millisecond)
+	RecordFollowRows("backfill", 5)
+	RecordFollowRows("cleanup", 2)
+	RecordFollowTask("user-9007199254740993", "done", time.Second) // unbounded label rejected
+	RecordFollowQueueSample([]FollowTaskSample{{Kind: "backfill", Status: "pending", Count: 4, OldestAge: 12}, {Kind: "cleanup", Status: "failed", Count: 1, OldestAge: 5}}, nil)
+	r := httptest.NewRecorder()
+	MetricsHandler(r, httptest.NewRequest("GET", "/metrics", nil))
+	body := r.Body.String()
+	for _, expected := range []string{
+		`convo_content_task_state{kind="delete_index",status="pending"}`,
+		`convo_content_task_state{kind="delete_inbox",status="pending"}`,
+		`convo_follow_task_total{kind="backfill",result="canceled"} 1`,
+		`convo_follow_rows_total{kind="backfill"} 5`,
+		`convo_follow_task_state{kind="backfill",status="pending"} 4`,
+		`convo_follow_task_state{kind="cleanup",status="failed"} 1`,
+		`convo_follow_oldest_unfinished_seconds{kind="backfill"} 12`,
+		`convo_follow_queue_sample_ok 1`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("missing metric %q", expected)
+		}
+	}
+	if strings.Contains(body, "user-9007199254740993") {
+		t.Fatal("high cardinality label leaked")
+	}
+	RecordFollowQueueSample(nil, fmt.Errorf("test collector disconnected"))
+	r = httptest.NewRecorder()
+	MetricsHandler(r, httptest.NewRequest("GET", "/metrics", nil))
+	body = r.Body.String()
+	if !strings.Contains(body, "convo_follow_queue_sample_ok 0") || !strings.Contains(body, `convo_follow_task_state{kind="backfill",status="pending"} 4`) {
+		t.Fatal("failed sampling should report disconnect but keep last values")
 	}
 }

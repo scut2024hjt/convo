@@ -60,10 +60,11 @@ function FollowButton({ authorId, session, api, go, onChanged }: {
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [syncing, setSyncing] = useState(false);
   useEffect(() => {
     if (!session || !authorId || session.user_id === authorId) { setLoading(false); return; }
     let active = true;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setSyncing(false);
     api<{ following: boolean }>(`/users/${encodeURIComponent(authorId)}/follow`)
       .then(data => { if (active) setFollowing(data.following); })
       .catch(e => { if (active) setError((e as Error).message); })
@@ -78,6 +79,7 @@ function FollowButton({ authorId, session, api, go, onChanged }: {
     try {
       const next = await api<{ following: boolean }>(`/users/${encodeURIComponent(authorId)}/follow`, following ? 'DELETE' : 'PUT');
       setFollowing(next.following);
+      setSyncing(next.following && !following);
       onChanged();
     } catch (e) { setError((e as Error).message); }
     finally { setPending(false); }
@@ -87,6 +89,7 @@ function FollowButton({ authorId, session, api, go, onChanged }: {
       {loading ? '读取状态…' : pending ? '处理中…' : following ? '✓ 已关注' : '+ 关注作者'}
     </button>
     {error && <span className="inline-error" role="alert">{error}</span>}
+    {syncing && <span className="hint" role="status">关注成功，历史内容也会同步。</span>}
   </span>;
 }
 
@@ -180,6 +183,8 @@ function PostDetail({ postId, api, go, session, onFollowChange }: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [votePending, setVotePending] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [voteError, setVoteError] = useState('');
   const [direction, setDirection] = useState<'1'|'-1'|'0'|'?'>('?');
   const refresh = useCallback(() => {
@@ -208,19 +213,34 @@ function PostDetail({ postId, api, go, session, onFollowChange }: {
     } catch(e) { setVoteError((e as Error).message); }
     finally { setVotePending(false); }
   }
+  async function deleteOwnPost() {
+    if (!session || !post || session.user_id !== post.author_id_str || deletePending) return;
+    if (!window.confirm('确认删除这篇帖子？删除后将不再展示。')) return;
+    setDeleteError(''); setDeletePending(true);
+    try {
+      await api(`/post/${encodeURIComponent(postId)}`, 'DELETE');
+      setPost(null);
+      go('/');
+    } catch (e) { setDeleteError((e as Error).message); }
+    finally { setDeletePending(false); }
+  }
   return <div className="detail-content"><button className="back-link" onClick={() => go('/')}>← 返回讨论</button>
     {loading ? <div className="empty-state">正在加载帖子…</div> : error || !post ? <div className="empty-state danger">{error || '帖子不存在'}<button onClick={() => { const cleanup = refresh(); void cleanup; }}>重新读取</button></div> : <article className="detail-card">
       <div className="meta-line"><span className="chip">{post.community?.name}</span><span>{timeLabel(post.create_time)}</span></div>
       <h1>{post.title}</h1>
       <div className="author-row"><div className="avatar">{post.author_name?.slice(0,1).toUpperCase()}</div><div><strong>{post.author_name}</strong><small>社区成员 · 作者</small></div>
         <div className="author-action"><FollowButton authorId={post.author_id_str} session={session} api={api} go={go} onChanged={onFollowChange} /></div></div>
+      {session && session.user_id === post.author_id_str && <div className="post-manage">
+        <button className="button secondary" disabled={deletePending} onClick={() => void deleteOwnPost()}>{deletePending ? '删除中…' : '删除我的帖子'}</button>
+        {deleteError && <span className="inline-error" role="alert">删除失败：{deleteError}（可以重试）</span>}
+      </div>}
       <div className="post-body">{post.content}</div>
       <div className="vote-row"><div><strong>{post.vote_num ?? 0}</strong><small>当前赞成票</small></div><div className="vote-actions">
         <button disabled={votePending} className={direction === '1' ? 'active' : ''} onClick={() => void vote('1')}>↑ 赞同</button>
         <button disabled={votePending} className={direction === '-1' ? 'active' : ''} onClick={() => void vote('-1')}>↓ 反对</button>
         <button disabled={votePending} onClick={() => void vote('0')}>撤销</button>
       </div></div>
-      {voteError && <div className="inline-error" role="alert">投票失败：{voteError}（可以重试）</div>}
+      {voteError && <div className="inline-error" role="alert">{voteError.includes('索引正在同步') ? voteError + '。请稍后手动重试，系统不会自动重复提交投票。' : '投票失败：' + voteError + '（可以重试）'}</div>}
       {direction === '?' && <p className="hint">后端当前未提供我的投票方向查询接口；刷新页面不会假设已投方向。</p>}
     </article>}
   </div>;
@@ -255,7 +275,7 @@ function AuthForm({ register, api, setSession, go }: { register: boolean; api: A
     </div></div>;
 }
 
-function NewPost({ api, go }: { api: ApiFn; go: Navigate }) {
+function NewPost({ api, go, onPublished }: { api: ApiFn; go: Navigate; onPublished: (id: string) => void }) {
   const [communities, setCommunities] = useState<Community[]>([]);
   const [communityId, setCommunityId] = useState('');
   const [title, setTitle] = useState('');
@@ -274,7 +294,10 @@ function NewPost({ api, go }: { api: ApiFn; go: Navigate }) {
     }
     setPending(true);
     try {
-      const result = await api<{ post_id: string }>('/post', 'POST', { community_id: Number(communityId), title, content });
+      const result = await api<{ post_id: string; distribution?: string }>('/post', 'POST', { community_id: Number(communityId), title, content });
+      // Do not resubmit on delayed projections: this response means the DB
+      // transaction committed, not that Redis/Feed projections are ready.
+      if (result.distribution === 'async') onPublished(result.post_id);
       go(`/post/${encodeURIComponent(result.post_id)}`);
     } catch (err) { setError((err as Error).message); }
     finally { setPending(false); }
@@ -359,7 +382,7 @@ export default function App() {
     <main key={`${authEpoch}:${route}`} className="main">
       {(route === '/login' || route === '/register') ? <AuthForm register={route === '/register'} api={api} setSession={setSession} go={go} /> :
       needsSession && !session ? <div className="empty-state"><h2>需要登录才能继续</h2><NavigateButton go={go} to="/login" className="button primary">去登录</NavigateButton></div> :
-      route === '/new' ? <NewPost api={api} go={go} /> :
+      route === '/new' ? <NewPost api={api} go={go} onPublished={() => setNotice('帖子已保存。内容索引和关注分发正在后台处理，首页与关注流可能稍后才出现；现在投票若提示同步中，请稍后手动重试。')} /> :
       isPost ? <PostDetail postId={route.split('/')[2]} api={api} go={go} session={session} onFollowChange={onFollowChange} /> :
       route === '/feed' ? <Feed api={api} go={go} refresh={refresh} /> :
       route === '/hot' || route === '/' ? <div className="home-grid"><section><div className="hero"><span className="eyebrow">AN OPEN SPACE FOR IDEAS</span><h1>每一个想法，<br/><em>都值得交流。</em></h1><p>发现值得思考的讨论，和好奇的人一起拓展视野。</p></div><PostList mode={route === '/hot' ? 'hot' : 'latest'} api={api} go={go} session={session} refresh={refresh} /></section>

@@ -41,13 +41,13 @@ func CreatePostHandler(c *gin.Context) {
 		Title: params.Title, Content: params.Content,
 	}
 	// 2. 创建帖子
-	if err := logic.CreatePost(p); err != nil {
+	if err := logic.CreatePostWithContext(c.Request.Context(), p); err != nil {
 		zap.L().Error("logic.CreatePost failed", zap.Error(err))
 		ResponseError(c, CodeServerBusy)
 		return
 	}
 	// 3. 返回响应
-	ResponseSuccess(c, gin.H{"post_id": strconv.FormatInt(p.ID, 10)})
+	ResponseSuccess(c, gin.H{"post_id": strconv.FormatInt(p.ID, 10), "distribution": "async"})
 }
 
 // GetPostDetailHandler 获取帖子详情的处理函数
@@ -214,3 +214,29 @@ func GetPostListTwoHandler(c *gin.Context) {
 //	// 2. 返回响应
 //	ResponseSuccess(c, data)
 //}
+
+// DeletePostHandler soft-deletes only the authenticated author's post.
+func DeletePostHandler(c *gin.Context) {
+	postID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || postID <= 0 {
+		ResponseError(c, CodeInvalidParam)
+		return
+	}
+	actor, err := getCurrentUserID(c)
+	if err != nil {
+		ResponseError(c, CodeNeedLogin)
+		return
+	}
+	err = logic.DeletePost(c.Request.Context(), postID, actor)
+	switch {
+	case errors.Is(err, logic.ErrPostNotFound):
+		ResponseError(c, CodePostNotFound)
+	case errors.Is(err, logic.ErrForbidden):
+		ResponseError(c, CodeForbidden)
+	case err != nil:
+		zap.L().Error("delete post", zap.Error(err))
+		ResponseError(c, CodeServerBusy)
+	default:
+		ResponseSuccess(c, gin.H{"deleted": true, "cleanup": "async"})
+	}
+}

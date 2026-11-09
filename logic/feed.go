@@ -51,3 +51,30 @@ func GetFeed(userID int64, limit int, cursor string) (*models.FeedPage, error) {
 	}
 	return page, nil
 }
+
+// GetFeedMode preserves the existing cursor/schema for default and pull feeds.
+// Push cursors are versioned and bound to the current JWT user.
+func GetFeedMode(userID int64, limit int, cursor, mode string) (*models.FeedPage, error) {
+	if mode == "" || mode == "pull" {
+		return GetFeed(userID, limit, cursor)
+	}
+	if mode != "push" {
+		return nil, ErrInvalidFeedCursor
+	}
+	before, id, err := feedcursor.DecodePush(cursor, userID)
+	if err != nil {
+		return nil, err
+	}
+	items, err := mysql.PushFeedPosts(userID, limit+1, before, id)
+	if err != nil {
+		return nil, err
+	}
+	page := &models.FeedPage{Items: items}
+	if len(items) > limit {
+		page.Items = items[:limit]
+		last := page.Items[len(page.Items)-1]
+		next := feedcursor.EncodePush(last.CreateTime, last.ID, userID)
+		page.NextCursor = &next
+	}
+	return page, nil
+}

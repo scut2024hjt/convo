@@ -53,3 +53,15 @@ cache:
 ratelimit:
   vote_window_milliseconds: 1000
   vote_max_requests: 10
+
+# T01: bounded MySQL-backed content projection workers.
+content_delivery:
+  poll_milliseconds: 500
+  batch_size: 100
+  lease_seconds: 15
+  io_timeout_seconds: 5
+  task_budget_seconds: 10
+  max_attempts: 12
+  max_backoff_seconds: 60
+  index_workers: 1
+  fanout_workers: 1

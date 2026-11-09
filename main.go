@@ -95,7 +95,7 @@ func main() {
 	}
 	workerCtx, stopWorkers := context.WithCancel(context.Background())
 	var workerGroup sync.WaitGroup
-	workerGroup.Add(2)
+	workerGroup.Add(4)
 	instanceID := fmt.Sprintf("%d", settings.Conf.SnowFlakeConfig.MachineId)
 	go func() {
 		defer workerGroup.Done()
@@ -104,6 +104,20 @@ func main() {
 	go func() {
 		defer workerGroup.Done()
 		worker.RunVoteConsumer(workerCtx, mqClient, "vote-db-"+instanceID)
+	}()
+	// Independent durable projection workers. A process restart does not
+	// erase pending tasks; expired owner generations are fenced by MySQL.
+	go func() {
+		defer workerGroup.Done()
+		worker.RunContentProjection(workerCtx, mysql.ProjectionIndex,
+			worker.StableOwnerPrefix(settings.Conf.SnowFlakeConfig.MachineId),
+			*settings.Conf.ContentDeliveryConfig)
+	}()
+	go func() {
+		defer workerGroup.Done()
+		worker.RunContentProjection(workerCtx, mysql.ProjectionFanout,
+			worker.StableOwnerPrefix(settings.Conf.SnowFlakeConfig.MachineId),
+			*settings.Conf.ContentDeliveryConfig)
 	}()
 	// Metrics have an independent listener so /metrics is never exposed on
 	// the public 9090 app port. The monitoring stack reaches 9091 internally.
@@ -137,6 +151,60 @@ func main() {
 			}
 		}()
 	}
+	// Per-database gauges are sampled by one designated instance only.
+	// Disable on replicas with CONVO_METRICS_SAMPLE_CONTENT=false.
+	if os.Getenv("CONVO_METRICS_SAMPLE_CONTENT") != "false" {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				sampleCtx, cancel := context.WithTimeout(workerCtx, 3*time.Second)
+				snapshots, err := mysql.ContentTaskSnapshots(sampleCtx)
+				cancel()
+				samples := make([]observability.ContentTaskSample, 0, len(snapshots))
+				for _, s := range snapshots {
+					samples = append(samples, observability.ContentTaskSample{
+						Kind: s.Kind, Status: s.Status, Count: s.Count, OldestAge: s.OldestAge,
+					})
+				}
+				observability.RecordContentQueueSample(samples, err)
+				followCtx, followCancel := context.WithTimeout(workerCtx, 3*time.Second)
+				followSnapshots, followErr := mysql.FollowTaskSnapshots(followCtx)
+				followCancel()
+				followSamples := make([]observability.FollowTaskSample, 0, len(followSnapshots))
+				for _, f := range followSnapshots {
+					followSamples = append(followSamples, observability.FollowTaskSample{Kind: f.Kind, Status: f.Status, Count: f.Count, OldestAge: f.OldestAge})
+				}
+				observability.RecordFollowQueueSample(followSamples, followErr)
+				if followErr != nil {
+					zap.L().Warn("follow queue sample failed", zap.Error(followErr))
+				}
+				if err != nil {
+					zap.L().Warn("content queue sample failed", zap.Error(err))
+				}
+				select {
+				case <-workerCtx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
+	for _, kind := range []string{mysql.ProjectionDeleteIndex, mysql.ProjectionDeleteInbox} {
+		workerGroup.Add(1)
+		go func(k string) {
+			defer workerGroup.Done()
+			worker.RunContentProjection(workerCtx, k, worker.StableOwnerPrefix(settings.Conf.MachineId), *settings.Conf.ContentDeliveryConfig)
+		}(kind)
+	}
+	for _, kind := range []string{mysql.FollowBackfill, mysql.FollowCleanup} {
+		workerGroup.Add(1)
+		go func(k string) {
+			defer workerGroup.Done()
+			worker.RunFollowDelivery(workerCtx, k, worker.StableOwnerPrefix(settings.Conf.MachineId), *settings.Conf.ContentDeliveryConfig)
+		}(kind)
+	}
+
 	// 5. 注册路由
 	r := router.Setup()
 	// 6. 启动服务（优雅关机）
@@ -181,7 +249,7 @@ func main() {
 		workerGroup.Wait()
 		close(workersDone)
 	}()
-	workerTimer := time.NewTimer(5 * time.Second)
+	workerTimer := time.NewTimer(7 * time.Second)
 	defer workerTimer.Stop()
 	select {
 	case <-workersDone:
