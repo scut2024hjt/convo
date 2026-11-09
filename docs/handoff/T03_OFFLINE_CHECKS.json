@@ -1,0 +1,42 @@
+{
+  "prepared_date": "2026-11-09",
+  "script_sha256": "e4cf14f27886ae169afd2921a3d79b2e0c55404ac0d88e631a72ae1632e128ac",
+  "snapshot_id": "t02-verified-7416472d5c379890",
+  "source_files": 180,
+  "results": [
+    {
+      "scenario": "original 176-file T02 delivery to accepted 180-file T03 input with network denied",
+      "result": "pass",
+      "input_unchanged": true,
+      "IP_socket_calls": 0
+    },
+    {
+      "scenario": "repeat execution on unchanged verified output",
+      "result": "pass"
+    },
+    {
+      "scenario": "already accepted input",
+      "result": "pass"
+    },
+    {
+      "scenario": "partially repaired source including one added integration test",
+      "result": "pass"
+    },
+    {
+      "scenario": "unknown input rejected before output creation",
+      "result": "pass",
+      "input_unchanged": true
+    },
+    {
+      "scenario": "bounded source discovery without explicit --source",
+      "result": "pass"
+    },
+    {
+      "scenario": "all four outputs match all 180 hashes/sizes/modes; clean Git input tag",
+      "result": "pass"
+    }
+  ],
+  "work_directory": "/tmp/convo-t03-offline-test-tmsibn2s",
+  "network_trace": "/tmp/convo-t03-offline-test-tmsibn2s/network-denied.strace",
+  "business_status": "T03 not implemented; T01/T02 code unchanged"
+}
