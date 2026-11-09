@@ -1,0 +1,57 @@
+{
+  "date": "2026-11-09",
+  "script_sha256": "3807021148543580a46bf159a6ab4c54afcf6676d95dc71e95819633ca556a3a",
+  "snapshot_id": "t03-committed-b6b0c5259968d8ad",
+  "source_files": 202,
+  "results": [
+    {
+      "scenario": "original 194-file T03 delivery to committed 202-file T04 input with network calls denied",
+      "result": "pass",
+      "input_unchanged": true,
+      "IP_socket_calls": 0
+    },
+    {
+      "scenario": "repeat verified output",
+      "result": "pass"
+    },
+    {
+      "scenario": "accepted source, including frozen baseline metadata handling",
+      "result": "pass",
+      "input_unchanged": true
+    },
+    {
+      "scenario": "accepted-with-record source, including frozen baseline metadata handling",
+      "result": "pass",
+      "input_unchanged": true
+    },
+    {
+      "scenario": "committed source, including frozen baseline metadata handling",
+      "result": "pass",
+      "input_unchanged": true
+    },
+    {
+      "scenario": "partially repaired source including an added file and updated baseline record",
+      "result": "pass"
+    },
+    {
+      "scenario": "unknown input rejected before output creation",
+      "result": "pass",
+      "input_unchanged": true
+    },
+    {
+      "scenario": "bounded automatic discovery from existing source cwd",
+      "result": "pass"
+    },
+    {
+      "scenario": "damaged connector script payload rejected before output creation",
+      "result": "pass"
+    },
+    {
+      "scenario": "all six output variants match 202 hashes/sizes/modes and clean Git input tag",
+      "result": "pass"
+    }
+  ],
+  "work_directory": "/tmp/convo-t04-offline-test-32cytgth",
+  "network_trace": "/tmp/convo-t04-offline-test-32cytgth/network-denied.strace",
+  "business_status": "T04 not implemented; T03 accepted code unchanged except baseline freeze metadata"
+}
