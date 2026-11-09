@@ -2,6 +2,17 @@ package controller
 
 import "github.com/scut2024hjt/convo/models"
 
+type DocLikeChange struct {
+	PostID  string `json:"post_id"`
+	Liked   bool   `json:"liked"`
+	Version string `json:"version"`
+	Changed bool   `json:"changed"`
+}
+
+type DocLikeBatch struct {
+	Items []*models.LikeState `json:"items"`
+}
+
 // 专门用来存放接口文档用到的 model
 // 因为我们的接口文档返回的数据格式是一致的，但是具体的 data 类型不一致
 

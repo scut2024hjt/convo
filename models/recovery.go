@@ -1,7 +1,7 @@
 package models
 
 // PostRecoverySnapshot contains the MySQL fields required to rebuild the
-// Redis post indexes. NetVote is the sum of the latest persisted directions.
+// Redis post indexes. NetVote is the count of liked users (only direction=1).
 type PostRecoverySnapshot struct {
 	PostID      int64 `db:"post_id"`
 	CommunityID int64 `db:"community_id"`

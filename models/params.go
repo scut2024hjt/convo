@@ -33,8 +33,8 @@ type ParamsUpdatePost struct {
 // ParamsVoteData 投票数据
 type ParamsVoteData struct {
 	//UserID 从请求中获取当前的用户
-	PostID    int64 `json:"post_id,string" binding:"required"`       // 帖子 id
-	Direction int8  `json:"direction,string" binding:"oneof=1 0 -1"` // 赞成票/反对票/取消投票
+	PostID    int64 `json:"post_id,string" binding:"required"`    // 帖子 id
+	Direction int8  `json:"direction,string" binding:"oneof=1 0"` // 点赞/取消，旧 -1 明确拒绝
 }
 
 // ParamsPostList 获取帖子列表 query string 参数

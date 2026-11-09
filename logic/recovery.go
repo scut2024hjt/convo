@@ -21,6 +21,12 @@ type RedisRebuildReport struct {
 // rebuilt post index. It does not attempt an online repair because MySQL may be
 // temporarily behind Redis while RabbitMQ still has vote events in flight.
 func EnsureRedisStateReady() error {
+	checkCtx, cancelLike := context.WithTimeout(context.Background(), 5*time.Second)
+	likeErr := mysql.LikeMigrationReady(checkCtx)
+	cancelLike()
+	if likeErr != nil {
+		return fmt.Errorf("mysql like migration gate: %w", likeErr)
+	}
 	status, err := redis.GetVoteStateStatus()
 	if err != nil {
 		return fmt.Errorf("read redis state marker: %w", err)
@@ -99,6 +105,16 @@ func EnsureRedisStateReady() error {
 			ErrRedisStateNeedsRebuild, databasePosts, indexedPosts, present, missing, pendingDeletedIndexed)
 	}
 	if status == "" {
+		if databasePosts != 0 || indexedPosts != 0 {
+			return fmt.Errorf("%w: missing marker for populated database", ErrRedisStateNeedsRebuild)
+		}
+		fresh, freshErr := redis.IsFreshEmptyRedisDB()
+		if freshErr != nil {
+			return freshErr
+		}
+		if !fresh {
+			return fmt.Errorf("%w: missing marker but Redis DB is not empty", ErrRedisStateNeedsRebuild)
+		}
 		if err = redis.MarkVoteStateReady(); err != nil {
 			return fmt.Errorf("mark redis state ready: %w", err)
 		}
@@ -112,6 +128,12 @@ func EnsureRedisStateReady() error {
 func RebuildRedisFromMySQL(batchSize int) (*RedisRebuildReport, error) {
 	if batchSize <= 0 {
 		batchSize = 500
+	}
+	migrationCtx, migrationCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	migrationErr := mysql.LikeMigrationRebuildable(migrationCtx)
+	migrationCancel()
+	if migrationErr != nil {
+		return nil, migrationErr
 	}
 	if err := redis.PrepareVoteStateRebuild(); err != nil {
 		return nil, fmt.Errorf("prepare redis rebuild: %w", err)
@@ -138,6 +160,9 @@ func RebuildRedisFromMySQL(batchSize int) (*RedisRebuildReport, error) {
 		if err = redis.RestoreVoteStateBatch(posts, votes); err != nil {
 			return nil, fmt.Errorf("write redis recovery batch: %w", err)
 		}
+		if err = redis.VerifyRestoredLikeBatch(posts, votes); err != nil {
+			return nil, fmt.Errorf("verify redis recovery batch: %w", err)
+		}
 		report.Posts += int64(len(posts))
 		report.Votes += int64(len(votes))
 		afterPostID = posts[len(posts)-1].PostID
@@ -148,6 +173,12 @@ func RebuildRedisFromMySQL(batchSize int) (*RedisRebuildReport, error) {
 	}
 	if indexedPosts != report.Posts {
 		return nil, fmt.Errorf("verify rebuilt redis indexes: restored=%d indexed=%d", report.Posts, indexedPosts)
+	}
+	completeCtx, completeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	completeErr := mysql.CompleteLikeMigration(completeCtx)
+	completeCancel()
+	if completeErr != nil {
+		return nil, fmt.Errorf("complete migration gate: %w", completeErr)
 	}
 	if err := redis.MarkVoteStateReady(); err != nil {
 		return nil, fmt.Errorf("complete redis rebuild: %w", err)

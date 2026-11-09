@@ -1,0 +1,12 @@
+# Use only with a unique COMPOSE_PROJECT_NAME, volumes, ports, and generated SQL.
+# Do not reuse production data. This override does not change existing Compose.
+services:
+  mysql8019:
+    environment:
+      MYSQL_DATABASE: ${CONVO_T03_DB:?Set isolated *_t03 database}
+    volumes:
+      - ${CONVO_T03_INIT_SQL:?Generate T03 init SQL first}:/docker-entrypoint-initdb.d/001-init.sql:ro
+  convo_app:
+    environment:
+      CONVO_MYSQL_DB: ${CONVO_T03_DB:?Set isolated *_t03 database}
+      CONVO_REDIS_DB: "11"

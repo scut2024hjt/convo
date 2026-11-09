@@ -24,7 +24,7 @@ func GetPostRecoveryBatch(afterPostID int64, limit int) ([]*models.PostRecoveryS
 		SELECT p.post_id,
 		       p.community_id,
 		       UNIX_TIMESTAMP(p.create_time) AS create_unix,
-		       COALESCE(SUM(pv.direction), 0) AS net_vote
+		       COALESCE(SUM(CASE WHEN pv.direction=1 THEN 1 ELSE 0 END), 0) AS net_vote
 		FROM post p
 		LEFT JOIN post_vote pv ON pv.post_id = p.post_id
 		WHERE p.status = 1 AND p.post_id > ?

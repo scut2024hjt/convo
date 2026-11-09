@@ -1,4 +1,29 @@
 definitions:
+  controller.DocLikeBatch:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/models.LikeState'
+        type: array
+    type: object
+  controller.DocLikeChange:
+    properties:
+      changed:
+        type: boolean
+      liked:
+        type: boolean
+      post_id:
+        type: string
+      version:
+        type: string
+    type: object
+  controller.ResponseData:
+    properties:
+      code:
+        type: integer
+      data: {}
+      msg: {}
+    type: object
   controller._Response:
     properties:
       code:
@@ -50,17 +75,19 @@ definitions:
         description: 提示信息
         type: string
     type: object
-  controller.ResponseData:
+  controller.batchLikeRequest:
     properties:
-      code:
-        type: integer
-      data: {}
-      msg: {}
+      post_ids:
+        items:
+          type: string
+        type: array
     type: object
   models.ApiPostDetail:
     properties:
       author_id:
         type: integer
+      author_id_str:
+        type: string
       author_name:
         type: string
       community_id:
@@ -79,7 +106,9 @@ definitions:
         type: integer
       title:
         type: string
-      vote_score:
+      update_time:
+        type: string
+      vote_num:
         type: integer
     required:
     - community_id
@@ -104,13 +133,30 @@ definitions:
       name:
         type: string
     type: object
+  models.LikeState:
+    properties:
+      code:
+        type: integer
+      freshness:
+        type: string
+      liked:
+        type: boolean
+      post_id:
+        type: string
+      source:
+        type: string
+      version:
+        type: string
+    type: object
   models.ParamsCreatePost:
     properties:
       community_id:
         type: integer
       content:
+        maxLength: 8192
         type: string
       title:
+        maxLength: 128
         type: string
     required:
     - community_id
@@ -122,6 +168,7 @@ definitions:
       password:
         type: string
       username:
+        maxLength: 32
         type: string
     required:
     - password
@@ -130,10 +177,14 @@ definitions:
   models.ParamsSignUp:
     properties:
       password:
+        maxLength: 72
+        minLength: 8
         type: string
       re_password:
         type: string
       username:
+        maxLength: 32
+        minLength: 3
         type: string
     required:
     - password
@@ -143,8 +194,10 @@ definitions:
   models.ParamsUpdatePost:
     properties:
       content:
+        maxLength: 8192
         type: string
       title:
+        maxLength: 128
         type: string
     required:
     - content
@@ -153,41 +206,18 @@ definitions:
   models.ParamsVoteData:
     properties:
       direction:
-        description: 赞成票/反对票/取消投票
+        description: 点赞/取消，旧 -1 明确拒绝
         enum:
-        - 1
-        - 0
-        - -1
-        example: "0"
+        - '1'
+        - '0'
+        example: '0'
         type: string
       post_id:
         description: UserID 从请求中获取当前的用户
-        example: "0"
+        example: '0'
         type: string
     required:
     - post_id
-    type: object
-  models.Post:
-    properties:
-      author_id:
-        type: integer
-      community_id:
-        type: integer
-      content:
-        type: string
-      create_time:
-        type: string
-      id:
-        example: "0"
-        type: string
-      status:
-        type: integer
-      title:
-        type: string
-    required:
-    - community_id
-    - content
-    - title
     type: object
 host: 127.0.0.1:9090/api/v1
 info:
@@ -199,7 +229,7 @@ info:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   title: convo 项目接口文档
-  version: "1.0"
+  version: '1.0'
 paths:
   /community:
     get:
@@ -214,7 +244,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller._ResponseCommunityList'
@@ -240,7 +270,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller._ResponseCommunityDetailList'
@@ -267,7 +297,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller.ResponseData'
@@ -287,7 +317,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller.ResponseData'
@@ -316,7 +346,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller.ResponseData'
@@ -339,7 +369,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller._ResponsePostList'
@@ -369,7 +399,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller.ResponseData'
@@ -378,6 +408,82 @@ paths:
       summary: 编辑帖子接口
       tags:
       - 帖子相关接口
+  /post/{id}/like:
+    delete:
+      description: 幂等设为未点赞；保留历史版本。
+      parameters:
+      - description: 帖子 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/controller.ResponseData'
+            - properties:
+                data:
+                  $ref: '#/definitions/controller.DocLikeChange'
+              type: object
+      security:
+      - ApiKeyAuth: []
+      summary: 取消点赞
+      tags:
+      - 点赞
+    get:
+      description: source=mysql/freshness=persisted 表示可能滞后的已持久化状态。
+      parameters:
+      - description: 帖子 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/controller.ResponseData'
+            - properties:
+                data:
+                  $ref: '#/definitions/models.LikeState'
+              type: object
+      security:
+      - ApiKeyAuth: []
+      summary: 查询本人点赞状态
+      tags:
+      - 点赞
+    put:
+      description: 幂等设为已点赞；成功表示 Redis 状态及事件已接受，MySQL 异步持久化。
+      parameters:
+      - description: 帖子 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/controller.ResponseData'
+            - properties:
+                data:
+                  $ref: '#/definitions/controller.DocLikeChange'
+              type: object
+      security:
+      - ApiKeyAuth: []
+      summary: 点赞
+      tags:
+      - 点赞
   /posts:
     get:
       consumes:
@@ -399,7 +505,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller._ResponsePostList'
@@ -408,6 +514,35 @@ paths:
       summary: 基础版帖子列表接口
       tags:
       - 帖子相关接口
+  /posts/like-states:
+    post:
+      consumes:
+      - application/json
+      description: 去重后最多 50 个 ID，原始数组最多 500 项、请求体最多 16KiB。不可见条目带业务 code。
+      parameters:
+      - description: 帖子 ID 列表
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/controller.batchLikeRequest'
+      produces:
+      - application/json
+      responses:
+        '200':
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/controller.ResponseData'
+            - properties:
+                data:
+                  $ref: '#/definitions/controller.DocLikeBatch'
+              type: object
+      security:
+      - ApiKeyAuth: []
+      summary: 批量查询本人点赞状态
+      tags:
+      - 点赞
   /posts2:
     get:
       consumes:
@@ -434,7 +569,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller._ResponsePostList'
@@ -457,7 +592,7 @@ paths:
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
             $ref: '#/definitions/controller._Response'
@@ -470,27 +605,29 @@ paths:
     post:
       consumes:
       - application/json
-      description: 投票接口
+      description: 仅支持 direction 字符串 0/1；负票返回参数错误。与新点赞接口共用状态和限流。
       parameters:
       - description: Bearer 用户令牌
         in: header
         name: Authorization
+        required: true
         type: string
       - description: 投票参数
         in: body
         name: object
+        required: true
         schema:
           $ref: '#/definitions/models.ParamsVoteData'
       produces:
       - application/json
       responses:
-        "200":
+        '200':
           description: OK
           schema:
-            $ref: '#/definitions/controller._Response'
+            $ref: '#/definitions/controller.ResponseData'
       security:
       - ApiKeyAuth: []
-      summary: 投票接口
+      summary: 点赞兼容接口
       tags:
       - 投票相关接口
-swagger: "2.0"
+swagger: '2.0'

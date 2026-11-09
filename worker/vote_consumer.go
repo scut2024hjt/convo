@@ -62,7 +62,12 @@ func handleVoteDelivery(ctx context.Context, client *mq.Client, delivery amqp.De
 		)
 		return
 	}
-	if errors.Is(err, mysqldao.ErrVoteEventConflict) {
+	if errors.Is(err, mysqldao.ErrVoteEventConflict) || errors.Is(err, mysqldao.ErrLegacyEventAdvance) {
+		if errors.Is(err, mysqldao.ErrLegacyEventAdvance) {
+			observability.RecordConsumer("legacy_rejected")
+		} else {
+			observability.RecordConsumer("like_conflict")
+		}
 		moveToDeadLetter(ctx, client, delivery, event.EventID, err)
 		return
 	}
@@ -108,11 +113,20 @@ func validateVoteEvent(event *models.VoteEvent) error {
 		event.Version <= 0 || event.OccurredAt <= 0 {
 		return errors.New("vote event is missing required fields")
 	}
-	if event.EventType != models.VoteChangedEventType {
-		return fmt.Errorf("unsupported vote event type %q", event.EventType)
+	if event.Version > models.MaxLikeVersion {
+		return fmt.Errorf("unsafe like version %d", event.Version)
 	}
-	if event.Direction != -1 && event.Direction != 0 && event.Direction != 1 {
-		return fmt.Errorf("invalid vote direction %d", event.Direction)
+	switch event.EventType {
+	case models.LikeChangedEventType:
+		if event.Direction != 0 && event.Direction != 1 {
+			return fmt.Errorf("invalid like direction %d", event.Direction)
+		}
+	case models.VoteChangedEventType:
+		if event.Direction != -1 && event.Direction != 0 && event.Direction != 1 {
+			return fmt.Errorf("invalid legacy vote direction %d", event.Direction)
+		}
+	default:
+		return fmt.Errorf("unsupported vote event type %q", event.EventType)
 	}
 	userID, err := strconv.ParseInt(event.UserID, 10, 64)
 	if err != nil {

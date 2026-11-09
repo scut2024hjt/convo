@@ -20,6 +20,7 @@ COPY . .
 RUN go build -trimpath -ldflags="-s -w" -o /out/convo_app .
 RUN go build -trimpath -ldflags="-s -w" -o /out/convo_rebuild_redis ./cmd/rebuild-redis
 RUN go build -trimpath -ldflags="-s -w" -o /out/convo_bootstrap_follow ./cmd/bootstrap-follow
+RUN go build -trimpath -ldflags="-s -w" -o /out/convo_migrate_likes ./cmd/migrate-likes
 
 FROM alpine:3.20
 RUN apk add --no-cache bash ca-certificates netcat-openbsd
@@ -28,12 +29,13 @@ WORKDIR /app
 COPY --from=builder /out/convo_app ./convo_app
 COPY --from=builder /out/convo_rebuild_redis ./convo_rebuild_redis
 COPY --from=builder /out/convo_bootstrap_follow ./convo_bootstrap_follow
+COPY --from=builder /out/convo_migrate_likes ./convo_migrate_likes
 COPY wait-for.sh ./wait-for.sh
 COPY templates ./templates
 COPY static ./static
 COPY --from=web-builder /src/web/dist ./web/dist
 COPY conf ./conf
-RUN chmod 755 ./convo_app ./convo_rebuild_redis ./convo_bootstrap_follow ./wait-for.sh
+RUN chmod 755 ./convo_app ./convo_rebuild_redis ./convo_bootstrap_follow ./convo_migrate_likes ./wait-for.sh
 
 EXPOSE 9090
 CMD ["./convo_app"]

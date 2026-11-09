@@ -36,7 +36,7 @@ import (
 // @license.name Apache 2.0
 // @license.url https://www.apache.org/licenses/LICENSE-2.0.html
 
-// @host 222.201.144.196:9090/api/v1
+// @host 127.0.0.1:9090/api/v1
 func main() {
 	// 1. 加载配置
 	if err := settings.Init(); err != nil {

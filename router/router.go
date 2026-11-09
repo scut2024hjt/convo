@@ -58,6 +58,10 @@ func Setup() *gin.Engine {
 		v1.DELETE("/post/:id", controller.DeletePostHandler)
 		// 投票接口额外挂一层用户级滑动窗口限流，拦短时刷票
 		v1.POST("/vote", middlewares.VoteRateLimitMiddleware(), controller.PostVoteHandler)
+		v1.PUT("/post/:id/like", middlewares.VoteRateLimitMiddleware(), controller.PutLikeHandler)
+		v1.DELETE("/post/:id/like", middlewares.VoteRateLimitMiddleware(), controller.DeleteLikeHandler)
+		v1.GET("/post/:id/like", controller.GetLikeHandler)
+		v1.POST("/posts/like-states", controller.PostLikeStatesHandler)
 		v1.POST("/logout", controller.LogoutHandler)
 	}
 	runtime.SetBlockProfileRate(1)

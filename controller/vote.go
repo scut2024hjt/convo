@@ -12,8 +12,8 @@ import (
 )
 
 // PostVoteHandler 投票
-// @Summary 投票接口
-// @Description 投票接口
+// @Summary 点赞兼容接口
+// @Description 仅支持 direction 字符串 0/1；负票返回参数错误。与新点赞接口共用状态和限流。
 // @Tags 投票相关接口
 // @Accept application/json
 // @Produce application/json

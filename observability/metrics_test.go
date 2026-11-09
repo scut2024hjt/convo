@@ -9,6 +9,20 @@ import (
 	"time"
 )
 
+func TestLikeStateReadsDoNotCountAsWrites(t *testing.T) {
+	reg.Lock()
+	before := reg.vote["changed"]
+	reg.Unlock()
+	RecordHTTP("GET", "/api/v1/post/:id/like", 200, 1000, time.Millisecond, false)
+	RecordHTTP("POST", "/api/v1/posts/like-states", 200, 1000, time.Millisecond, false)
+	reg.Lock()
+	after := reg.vote["changed"]
+	reg.Unlock()
+	if after != before {
+		t.Fatalf("reading own like state added %d write outcomes", after-before)
+	}
+}
+
 func TestMetricsKeepRouteTemplatesAndBusinessFailure(t *testing.T) {
 	RecordHTTP("POST", "/api/v1/vote", 200, 1012, 13*time.Millisecond, false)
 	RecordHTTP("GET", "", 404, 0, time.Millisecond, false)
@@ -121,5 +135,30 @@ func TestT02TaskMetricsBoundedAndSamples(t *testing.T) {
 	body = r.Body.String()
 	if !strings.Contains(body, "convo_follow_queue_sample_ok 0") || !strings.Contains(body, `convo_follow_task_state{kind="backfill",status="pending"} 4`) {
 		t.Fatal("failed sampling should report disconnect but keep last values")
+	}
+}
+
+func TestT03LikeLabelsAreBoundedAndTrackStatus(t *testing.T) {
+	RecordHTTP("PUT", "/api/v1/post/:id/like", 200, 1000, time.Millisecond, false)
+	RecordHTTP("DELETE", "/api/v1/post/:id/like", 200, 1000, time.Millisecond, true)
+	RecordLikeReadFallback("mysql")
+	RecordLikeReadFallback("unexpected-high-cardinality-user-value")
+	RecordConsumer("legacy_rejected")
+	RecordConsumer("like_conflict")
+	r := httptest.NewRecorder()
+	MetricsHandler(r, httptest.NewRequest("GET", "/metrics", nil))
+	text := r.Body.String()
+	for _, term := range []string{
+		`result="changed"`, `result="unchanged"`,
+		`convo_like_read_fallback_total{result="mysql"} 1`,
+		`convo_vote_consumer_total{result="legacy_rejected"} 1`,
+		`convo_vote_consumer_total{result="like_conflict"} 1`,
+	} {
+		if !strings.Contains(text, term) {
+			t.Errorf("missing metric: %s", term)
+		}
+	}
+	if strings.Contains(text, "unexpected-high-cardinality-user-value") {
+		t.Fatal("unbounded metric label accepted")
 	}
 }

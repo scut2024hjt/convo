@@ -5,7 +5,9 @@ package logic
 
 import (
 	"fmt"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,10 +21,23 @@ import (
 )
 
 func TestRebuildRedisFromMySQL(t *testing.T) {
-	mysqlConfig := &settings.MySQLConfig{
-		Host: "127.0.0.1", Port: 33306, User: "root", Password: "123456", DB: "convo",
-		MaxOpenConnection: 4, MaxIdleConnection: 2,
+	dbName := os.Getenv("CONVO_T03_TEST_MYSQL_DB")
+	if !strings.HasSuffix(dbName, "_t03") || os.Getenv("CONVO_T03_REDIS_INTEGRATION_OK") != "yes" {
+		t.Skip("T03 isolated MySQL/Redis opt-in required")
 	}
+	mysqlPort, e := strconv.Atoi(os.Getenv("CONVO_T03_TEST_MYSQL_PORT"))
+	if e != nil {
+		t.Fatal("invalid MySQL test port")
+	}
+	redisPort, e := strconv.Atoi(os.Getenv("CONVO_T03_TEST_REDIS_PORT"))
+	if e != nil {
+		t.Fatal("invalid Redis test port")
+	}
+	redisDB, e := strconv.Atoi(os.Getenv("CONVO_T03_TEST_REDIS_DB"))
+	if e != nil || redisDB <= 0 {
+		t.Fatal("invalid isolated Redis DB")
+	}
+	mysqlConfig := &settings.MySQLConfig{Host: os.Getenv("CONVO_T03_TEST_MYSQL_HOST"), Port: mysqlPort, User: os.Getenv("CONVO_T03_TEST_MYSQL_USER"), Password: os.Getenv("CONVO_T03_TEST_MYSQL_PASSWORD"), DB: dbName, MaxOpenConnection: 4, MaxIdleConnection: 2}
 	if err := mysql.Init(mysqlConfig); err != nil {
 		t.Skipf("mysql integration service is unavailable: %v", err)
 	}
@@ -38,14 +53,14 @@ func TestRebuildRedisFromMySQL(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cleanupDB.Close() })
 
-	const recoveryTestDB = 14
-	redisConfig := &settings.RedisConfig{Host: "127.0.0.1", Port: 36379, DB: recoveryTestDB, PoolSize: 8}
+	recoveryTestDB := redisDB
+	redisConfig := &settings.RedisConfig{Host: os.Getenv("CONVO_T03_TEST_REDIS_HOST"), Port: redisPort, DB: recoveryTestDB, PoolSize: 8}
 	if err := redisdao.Init(redisConfig); err != nil {
 		t.Skipf("redis integration service is unavailable: %v", err)
 	}
 	t.Cleanup(redisdao.Close)
 	assertClient := redigo.NewClient(&redigo.Options{
-		Addr: "127.0.0.1:36379", DB: recoveryTestDB, PoolSize: 2,
+		Addr: fmt.Sprintf("%s:%d", os.Getenv("CONVO_T03_TEST_REDIS_HOST"), redisPort), DB: recoveryTestDB, PoolSize: 2,
 	})
 	if err := assertClient.FlushDB().Err(); err != nil {
 		t.Fatal(err)
@@ -72,14 +87,14 @@ func TestRebuildRedisFromMySQL(t *testing.T) {
 
 	events := []*models.VoteEvent{
 		{
-			EventID: fmt.Sprintf("%d-recovery-1", unique), EventType: models.VoteChangedEventType,
+			EventID: fmt.Sprintf("%d-recovery-1", unique), EventType: models.LikeChangedEventType,
 			UserID: strconv.FormatInt(post.AuthorID, 10), PostID: strconv.FormatInt(post.ID, 10),
 			Direction: 1, Version: 1, OccurredAt: time.Now().Unix(),
 		},
 		{
-			EventID: fmt.Sprintf("%d-recovery-2", unique), EventType: models.VoteChangedEventType,
+			EventID: fmt.Sprintf("%d-recovery-2", unique), EventType: models.LikeChangedEventType,
 			UserID: strconv.FormatInt(post.AuthorID, 10), PostID: strconv.FormatInt(post.ID, 10),
-			Direction: -1, Version: 2, OccurredAt: time.Now().Unix(),
+			Direction: 0, Version: 2, OccurredAt: time.Now().Unix(),
 		},
 	}
 	for _, event := range events {
@@ -104,14 +119,13 @@ func TestRebuildRedisFromMySQL(t *testing.T) {
 	}
 
 	postID := strconv.FormatInt(post.ID, 10)
-	wantScore := float64(storedPost.CreateTime.Unix() - 432)
+	wantScore := float64(storedPost.CreateTime.Unix())
 	gotScore, err := assertClient.ZScore("convo:post:score", postID).Result()
 	if err != nil || gotScore != wantScore {
 		t.Fatalf("score=%v want=%v err=%v", gotScore, wantScore, err)
 	}
-	direction, err := assertClient.ZScore("convo:post:voted:"+postID, strconv.FormatInt(post.AuthorID, 10)).Result()
-	if err != nil || direction != -1 {
-		t.Fatalf("direction=%v err=%v", direction, err)
+	if _, err := assertClient.ZScore("convo:post:voted:"+postID, strconv.FormatInt(post.AuthorID, 10)).Result(); err != redigo.Nil {
+		t.Fatalf("cancelled like still present: %v", err)
 	}
 	version, err := assertClient.HGet("convo:post:vote:version:"+postID, strconv.FormatInt(post.AuthorID, 10)).Int64()
 	if err != nil || version != 2 {

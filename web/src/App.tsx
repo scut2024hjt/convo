@@ -176,42 +176,89 @@ function Feed({ api, go, refresh }: { api: ApiFn; go: Navigate; refresh: number 
   </div>;
 }
 
+type OwnLike = { post_id: string; liked: boolean; version: string; source: 'redis'|'mysql'; freshness: 'realtime'|'persisted' };
+type LikeChange = { post_id: string; liked: boolean; version: string; changed: boolean };
+
 function PostDetail({ postId, api, go, session, onFollowChange }: {
   postId: string; api: ApiFn; go: Navigate; session: Session|null; onFollowChange: () => void;
 }) {
   const [post, setPost] = useState<Post|null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [votePending, setVotePending] = useState(false);
+  const [like, setLike] = useState<OwnLike|null>(null);
+  const [likeLoading, setLikeLoading] = useState(false);
+  const [likePending, setLikePending] = useState(false);
+  const [likeUncertain, setLikeUncertain] = useState(false);
+  const [likeError, setLikeError] = useState('');
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState('');
-  const [voteError, setVoteError] = useState('');
-  const [direction, setDirection] = useState<'1'|'-1'|'0'|'?'>('?');
-  const refresh = useCallback(() => {
-    let active = true;
-    setLoading(true); setError('');
-    api<Post>(`/post/${encodeURIComponent(postId)}`)
-      .then(data => { if (active) setPost(data); })
-      .catch(e => { if (active) setError((e as Error).message); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+  const scope = useRef(0);
+
+  const refreshLike = useCallback(async (token: number, prior?: OwnLike|null) => {
+    const snapshot = await api<OwnLike>(`/post/${encodeURIComponent(postId)}/like`);
+    if (scope.current !== token) return;
+    setLike(current => {
+      const known = prior ?? current;
+      if (known && snapshot.freshness === 'persisted' && BigInt(snapshot.version) < BigInt(known.version)) return known;
+      return snapshot;
+    });
+    if (snapshot.freshness === 'realtime') setLikeUncertain(false);
+    return snapshot;
   }, [api, postId]);
-  useEffect(() => refresh(), [refresh]);
-  async function vote(value: '1'|'-1'|'0') {
+
+  useEffect(() => {
+    const token = ++scope.current;
+    setPost(null); setLike(null); setError(''); setLikeError(''); setLoading(true);
+    setLikeLoading(Boolean(session)); setLikePending(false); setLikeUncertain(false);
+    api<Post>(`/post/${encodeURIComponent(postId)}`)
+      .then(p => { if (scope.current === token) setPost(p); })
+      .catch(e => { if (scope.current === token) setError((e as Error).message); })
+      .finally(() => { if (scope.current === token) setLoading(false); });
+    if (session) {
+      refreshLike(token).catch(e => { if (scope.current === token) setLikeError(`读取点赞状态失败：${(e as Error).message}`); })
+        .finally(() => { if (scope.current === token) setLikeLoading(false); });
+    }
+    return () => { scope.current += 1; };
+  }, [api, postId, session?.token, session?.user_id, refreshLike]);
+
+  async function toggleLike() {
     if (!session) { go('/login'); return; }
-    if (votePending) return;
-    setVoteError(''); setVotePending(true);
+    if (likePending || likeLoading || likeUncertain || !like) return;
+    const token = scope.current;
+    const before = like;
+    setLikePending(true); setLikeError('');
+    const method = like.liked ? 'DELETE' : 'PUT';
     try {
-      await api('/vote', 'POST', { post_id: postId, direction: value });
-      setDirection(value);
-      // The vote score is read from Redis; do not optimistically fake a count.
+      const result = await api<LikeChange>(`/post/${encodeURIComponent(postId)}/like`, method);
+      if (scope.current !== token) return;
+      const confirmed: OwnLike = { post_id: postId, liked: result.liked, version: result.version,
+        source: 'redis', freshness: 'realtime' };
+      setLike(confirmed);
       try {
-        setPost(await api<Post>(`/post/${encodeURIComponent(postId)}`));
+        const freshPost = await api<Post>(`/post/${encodeURIComponent(postId)}`);
+        if (scope.current === token) setPost(freshPost);
       } catch (refreshError) {
-        setVoteError(`投票已提交，但刷新票数失败：${(refreshError as Error).message}`);
+        if (scope.current === token) setLikeError(`点赞状态已确认，人数暂未刷新：${(refreshError as Error).message}`);
       }
-    } catch(e) { setVoteError((e as Error).message); }
-    finally { setVotePending(false); }
+    } catch (e) {
+      if (scope.current !== token) return;
+      setLikeUncertain(true);
+      // A timeout is ambiguous; never overwrite the local confirmed state with a guess.
+      try {
+        const snapshot = await refreshLike(token, before);
+        if (scope.current === token) {
+          setLikeError(snapshot?.freshness === 'realtime'
+            ? '请求结果已重新读取；如人数未更新，可刷新帖子。'
+            : '暂时只能读取已保存状态，本次操作结果仍待确认；请重新读取点赞状态。');
+          const freshPost = await api<Post>(`/post/${encodeURIComponent(postId)}`);
+          if (scope.current === token) setPost(freshPost);
+        }
+      } catch (readError) {
+        if (scope.current === token) setLikeError(`本次操作结果尚未确认：${(readError as Error).message}。请先刷新状态再操作。`);
+      }
+    } finally {
+      if (scope.current === token) setLikePending(false);
+    }
   }
   async function deleteOwnPost() {
     if (!session || !post || session.user_id !== post.author_id_str || deletePending) return;
@@ -219,13 +266,23 @@ function PostDetail({ postId, api, go, session, onFollowChange }: {
     setDeleteError(''); setDeletePending(true);
     try {
       await api(`/post/${encodeURIComponent(postId)}`, 'DELETE');
-      setPost(null);
-      go('/');
+      setPost(null); go('/');
     } catch (e) { setDeleteError((e as Error).message); }
     finally { setDeletePending(false); }
   }
   return <div className="detail-content"><button className="back-link" onClick={() => go('/')}>← 返回讨论</button>
-    {loading ? <div className="empty-state">正在加载帖子…</div> : error || !post ? <div className="empty-state danger">{error || '帖子不存在'}<button onClick={() => { const cleanup = refresh(); void cleanup; }}>重新读取</button></div> : <article className="detail-card">
+    {loading ? <div className="empty-state">正在加载帖子…</div> : error || !post ? <div className="empty-state danger">{error || '帖子不存在'}<button onClick={() => {
+      const token = ++scope.current;
+      setPost(null); setLike(null); setLoading(true); setError(''); setLikeError(''); setLikeLoading(Boolean(session));
+      api<Post>(`/post/${encodeURIComponent(postId)}`)
+        .then(p => { if (scope.current === token) setPost(p); })
+        .catch(e => { if (scope.current === token) setError((e as Error).message); })
+        .finally(() => { if (scope.current === token) setLoading(false); });
+      if (session) {
+        void refreshLike(token).catch(e => {if (scope.current === token) setLikeError((e as Error).message);})
+          .finally(() => {if (scope.current === token) setLikeLoading(false);});
+      }
+    }}>重新读取</button></div> : <article className="detail-card">
       <div className="meta-line"><span className="chip">{post.community?.name}</span><span>{timeLabel(post.create_time)}</span></div>
       <h1>{post.title}</h1>
       <div className="author-row"><div className="avatar">{post.author_name?.slice(0,1).toUpperCase()}</div><div><strong>{post.author_name}</strong><small>社区成员 · 作者</small></div>
@@ -235,13 +292,21 @@ function PostDetail({ postId, api, go, session, onFollowChange }: {
         {deleteError && <span className="inline-error" role="alert">删除失败：{deleteError}（可以重试）</span>}
       </div>}
       <div className="post-body">{post.content}</div>
-      <div className="vote-row"><div><strong>{post.vote_num ?? 0}</strong><small>当前赞成票</small></div><div className="vote-actions">
-        <button disabled={votePending} className={direction === '1' ? 'active' : ''} onClick={() => void vote('1')}>↑ 赞同</button>
-        <button disabled={votePending} className={direction === '-1' ? 'active' : ''} onClick={() => void vote('-1')}>↓ 反对</button>
-        <button disabled={votePending} onClick={() => void vote('0')}>撤销</button>
-      </div></div>
-      {voteError && <div className="inline-error" role="alert">{voteError.includes('索引正在同步') ? voteError + '。请稍后手动重试，系统不会自动重复提交投票。' : '投票失败：' + voteError + '（可以重试）'}</div>}
-      {direction === '?' && <p className="hint">后端当前未提供我的投票方向查询接口；刷新页面不会假设已投方向。</p>}
+      <div className="vote-row"><div><strong>{post.vote_num ?? 0}</strong><small>点赞人数</small></div>
+        <div className="vote-actions">
+          {!session ? <button onClick={() => go('/login')}>登录后点赞</button> :
+          <button disabled={likePending || likeLoading || likeUncertain || like === null}
+            className={like?.liked ? 'active' : ''} onClick={() => void toggleLike()}>
+            {likeLoading ? '读取状态…' : likePending ? '正在处理…' : likeUncertain ? '状态待确认' : like ? like.liked ? '♥ 取消点赞' : '♡ 点赞' : '状态待确认'}
+          </button>}
+        </div>
+      </div>
+      {like?.freshness === 'persisted' && <p className="hint" role="status">当前展示的是已保存状态，可能略有延迟。</p>}
+      {likeError && <div className="inline-error" role="alert">{likeError} <button disabled={likeLoading || likePending} onClick={() => {
+        const token = scope.current; setLikeLoading(true); setLikeError('');
+        void refreshLike(token).catch(e => {if (scope.current === token) setLikeError((e as Error).message);})
+          .finally(() => {if (scope.current === token) setLikeLoading(false);});
+      }}>重新读取点赞状态</button></div>}
     </article>}
   </div>;
 }
@@ -265,7 +330,7 @@ function AuthForm({ register, api, setSession, go }: { register: boolean; api: A
     finally { setPending(false); }
   }
   return <div className="auth-layout"><div className="auth-art"><span className="eyebrow">WELCOME TO CONVO</span><h1>好问题，<br/>值得被看见。</h1><p>用你的观点连接更多人。探索不同的想法，也分享自己的故事。</p><div className="quote-mark">“</div></div>
-    <div className="auth-form"><span className="eyebrow">ACCOUNT / 账户</span><h2>{register ? '创建账号' : '欢迎回来'}</h2><p>{register ? '加入社区，开启你的第一场讨论。' : '登录后关注作者、发帖和参与投票。'}</p>
+    <div className="auth-form"><span className="eyebrow">ACCOUNT / 账户</span><h2>{register ? '创建账号' : '欢迎回来'}</h2><p>{register ? '加入社区，开启你的第一场讨论。' : '登录后关注作者、发帖和点赞。'}</p>
       <form onSubmit={e => void submit(e)}><label>用户名<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} placeholder="请输入用户名" required /></label>
         <label>密码<input type="password" autoComplete={register ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="至少 8 个字符" required /></label>
         {register && <label>确认密码<input type="password" autoComplete="new-password" value={repeat} onChange={e => setRepeat(e.target.value)} required /></label>}

@@ -38,7 +38,7 @@ func TestVoteStateRebuild(t *testing.T) {
 	}
 	votes := []*models.VoteRecoverySnapshot{
 		{PostID: 101, UserID: 201, Direction: 1, Version: 1},
-		{PostID: 101, UserID: 202, Direction: -1, Version: 3},
+		{PostID: 101, UserID: 202, Direction: 0, Version: 3},
 		{PostID: 101, UserID: 203, Direction: 0, Version: 4},
 	}
 	if err = RestoreVoteStateBatch(posts, votes); err != nil {
@@ -57,8 +57,8 @@ func TestVoteStateRebuild(t *testing.T) {
 	if err != nil || upVotes != 1 {
 		t.Fatalf("upvotes=%d err=%v", upVotes, err)
 	}
-	if direction, err := client.ZScore(getRedisKey(KeyPostVotedZSetPrefix+postID), "202").Result(); err != nil || direction != -1 {
-		t.Fatalf("direction=%v err=%v", direction, err)
+	if _, err := client.ZScore(getRedisKey(KeyPostVotedZSetPrefix+postID), "202").Result(); err != Nil {
+		t.Fatalf("cancelled like should not be in zset: %v", err)
 	}
 	if exists, err := client.ZScore(getRedisKey(KeyPostVotedZSetPrefix+postID), "203").Result(); err != Nil || exists != 0 {
 		t.Fatalf("direction=0 must remain absent from vote zset: score=%v err=%v", exists, err)

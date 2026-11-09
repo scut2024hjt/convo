@@ -4,6 +4,8 @@
 package redis
 
 import (
+	"os"
+	"strconv"
 	"testing"
 
 	"github.com/scut2024hjt/convo/settings"
@@ -19,10 +21,21 @@ const integrationTestDB = 15
 // initIntegrationRedis 连接测试专用 DB，并清空上一次运行的残留数据。
 func initIntegrationRedis(t *testing.T, poolSize int) {
 	t.Helper()
+	if os.Getenv("CONVO_T03_REDIS_INTEGRATION_OK") != "yes" {
+		t.Skip("set CONVO_T03_REDIS_INTEGRATION_OK=yes only for an isolated Redis instance; FLUSHDB is destructive")
+	}
+	port, err := strconv.Atoi(os.Getenv("CONVO_T03_TEST_REDIS_PORT"))
+	if err != nil || port <= 0 {
+		t.Fatal("CONVO_T03_TEST_REDIS_PORT required")
+	}
+	dbIndex, err := strconv.Atoi(os.Getenv("CONVO_T03_TEST_REDIS_DB"))
+	if err != nil || dbIndex <= 0 || dbIndex > 15 {
+		t.Fatal("CONVO_T03_TEST_REDIS_DB must be 1..15 (isolated)")
+	}
 	if err := Init(&settings.RedisConfig{
 		Host:     "127.0.0.1",
-		Port:     36379,
-		DB:       integrationTestDB,
+		Port:     port,
+		DB:       dbIndex,
 		PoolSize: poolSize,
 	}); err != nil {
 		t.Skipf("redis integration service is unavailable: %v", err)

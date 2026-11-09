@@ -1,0 +1,61 @@
+# Standalone disposable stack. Does not load the repository's local overrides.
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CONVO_T03_PASSWORD:?Set a disposable password}
+      MYSQL_ROOT_HOST: "%"
+    ports: ["127.0.0.1:${CONVO_T03_MYSQL_PORT:-29606}:3306"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ${CONVO_T03_INIT_SQL:?Generate isolated init SQL first}:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_ROOT_PASSWORD mysqladmin ping -uroot --silent"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  redis:
+    image: redis:7.2-alpine
+    ports: ["127.0.0.1:${CONVO_T03_REDIS_PORT:-29679}:6379"]
+    volumes: ["redis-data:/data"]
+  rabbit:
+    image: rabbitmq:3.13-management-alpine
+    hostname: t03-review
+    environment:
+      RABBITMQ_DEFAULT_USER: convo_review
+      RABBITMQ_DEFAULT_PASS: ${CONVO_T03_PASSWORD:?Set a disposable password}
+    ports:
+      - "127.0.0.1:${CONVO_T03_AMQP_PORT:-29672}:5672"
+      - "127.0.0.1:${CONVO_T03_MANAGEMENT_PORT:-29673}:15672"
+    volumes: ["rabbit-data:/var/lib/rabbitmq"]
+  app:
+    image: ${CONVO_T03_IMAGE:-convo-t03-standalone:local}
+    build:
+      context: ${CONVO_T03_SOURCE:-../..}
+    command: ["./wait-for.sh", "redis:6379", "mysql:3306", "rabbit:5672", "--", "./convo_app"]
+    environment:
+      CONVO_MYSQL_HOST: mysql
+      CONVO_MYSQL_PORT: "3306"
+      CONVO_MYSQL_USER: root
+      CONVO_MYSQL_PASSWORD: ${CONVO_T03_PASSWORD:?Set a disposable password}
+      CONVO_MYSQL_DB: ${CONVO_T03_DB:?Set an isolated *_t03 database}
+      CONVO_REDIS_HOST: redis
+      CONVO_REDIS_PORT: "6379"
+      CONVO_REDIS_DB: "11"
+      CONVO_RABBITMQ_URL: amqp://convo_review:${CONVO_T03_PASSWORD:?Set a disposable password}@rabbit:5672/
+      CONVO_AUTH_JWT_SECRET: ${CONVO_T03_JWT_SECRET:?Set a disposable JWT secret}
+      CONVO_METRICS_ADDR: 0.0.0.0:9091
+    ports:
+      - "127.0.0.1:${CONVO_T03_APP_PORT:-29690}:9090"
+      - "127.0.0.1:${CONVO_T03_METRICS_PORT:-29691}:9091"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      rabbit:
+        condition: service_started
+volumes:
+  mysql-data:
+  redis-data:
+  rabbit-data:

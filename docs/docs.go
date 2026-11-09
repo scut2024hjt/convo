@@ -240,12 +240,6 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Bearer 用户令牌",
-                        "name": "Authorization",
-                        "in": "header"
-                    },
-                    {
-                        "type": "string",
                         "description": "帖子 id 参数",
                         "name": "id",
                         "in": "path",
@@ -312,6 +306,140 @@ const docTemplate = `{
                 }
             }
         },
+        "/post/{id}/like": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "source=mysql/freshness=persisted 表示可能滞后的已持久化状态。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞"
+                ],
+                "summary": "查询本人点赞状态",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "帖子 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/controller.ResponseData"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/models.LikeState"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "幂等设为已点赞；成功表示 Redis 状态及事件已接受，MySQL 异步持久化。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞"
+                ],
+                "summary": "点赞",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "帖子 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/controller.ResponseData"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/controller.DocLikeChange"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "幂等设为未点赞；保留历史版本。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞"
+                ],
+                "summary": "取消点赞",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "帖子 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/controller.ResponseData"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/controller.DocLikeChange"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/posts": {
             "get": {
                 "security": [
@@ -355,6 +483,57 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/controller._ResponsePostList"
+                        }
+                    }
+                }
+            }
+        },
+        "/posts/like-states": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "去重后最多 50 个 ID，原始数组最多 500 项、请求体最多 16KiB。不可见条目带业务 code。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "点赞"
+                ],
+                "summary": "批量查询本人点赞状态",
+                "parameters": [
+                    {
+                        "description": "帖子 ID 列表",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/controller.batchLikeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/controller.ResponseData"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/controller.DocLikeBatch"
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -462,7 +641,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "投票接口",
+                "description": "仅支持 direction 字符串 0/1；负票返回参数错误。与新点赞接口共用状态和限流。",
                 "consumes": [
                     "application/json"
                 ],
@@ -472,18 +651,20 @@ const docTemplate = `{
                 "tags": [
                     "投票相关接口"
                 ],
-                "summary": "投票接口",
+                "summary": "点赞兼容接口",
                 "parameters": [
                     {
                         "type": "string",
                         "description": "Bearer 用户令牌",
                         "name": "Authorization",
-                        "in": "header"
+                        "in": "header",
+                        "required": true
                     },
                     {
                         "description": "投票参数",
                         "name": "object",
                         "in": "body",
+                        "required": true,
                         "schema": {
                             "$ref": "#/definitions/models.ParamsVoteData"
                         }
@@ -493,7 +674,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/controller._Response"
+                            "$ref": "#/definitions/controller.ResponseData"
                         }
                     }
                 }
@@ -501,6 +682,34 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "controller.DocLikeBatch": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.LikeState"
+                    }
+                }
+            }
+        },
+        "controller.DocLikeChange": {
+            "type": "object",
+            "properties": {
+                "changed": {
+                    "type": "boolean"
+                },
+                "liked": {
+                    "type": "boolean"
+                },
+                "post_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "controller.ResponseData": {
             "type": "object",
             "properties": {
@@ -584,6 +793,17 @@ const docTemplate = `{
                 }
             }
         },
+        "controller.batchLikeRequest": {
+            "type": "object",
+            "properties": {
+                "post_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "models.ApiPostDetail": {
             "type": "object",
             "required": [
@@ -594,6 +814,9 @@ const docTemplate = `{
             "properties": {
                 "author_id": {
                     "type": "integer"
+                },
+                "author_id_str": {
+                    "type": "string"
                 },
                 "author_name": {
                     "type": "string"
@@ -622,7 +845,10 @@ const docTemplate = `{
                 "title": {
                     "type": "string"
                 },
-                "vote_score": {
+                "update_time": {
+                    "type": "string"
+                },
+                "vote_num": {
                     "type": "integer"
                 }
             }
@@ -655,6 +881,29 @@ const docTemplate = `{
                 }
             }
         },
+        "models.LikeState": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "freshness": {
+                    "type": "string"
+                },
+                "liked": {
+                    "type": "boolean"
+                },
+                "post_id": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
         "models.ParamsCreatePost": {
             "type": "object",
             "required": [
@@ -667,10 +916,12 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "content": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 8192
                 },
                 "title": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -685,7 +936,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "username": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 32
                 }
             }
         },
@@ -698,13 +950,17 @@ const docTemplate = `{
             ],
             "properties": {
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 72,
+                    "minLength": 8
                 },
                 "re_password": {
                     "type": "string"
                 },
                 "username": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 32,
+                    "minLength": 3
                 }
             }
         },
@@ -716,10 +972,12 @@ const docTemplate = `{
             ],
             "properties": {
                 "content": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 8192
                 },
                 "title": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 128
                 }
             }
         },
@@ -730,12 +988,11 @@ const docTemplate = `{
             ],
             "properties": {
                 "direction": {
-                    "description": "赞成票/反对票/取消投票",
+                    "description": "点赞/取消，旧 -1 明确拒绝",
                     "type": "string",
                     "enum": [
-                        1,
-                        0,
-                        -1
+                        "1",
+                        "0"
                     ],
                     "example": "0"
                 },
@@ -743,38 +1000,6 @@ const docTemplate = `{
                     "description": "UserID 从请求中获取当前的用户",
                     "type": "string",
                     "example": "0"
-                }
-            }
-        },
-        "models.Post": {
-            "type": "object",
-            "required": [
-                "community_id",
-                "content",
-                "title"
-            ],
-            "properties": {
-                "author_id": {
-                    "type": "integer"
-                },
-                "community_id": {
-                    "type": "integer"
-                },
-                "content": {
-                    "type": "string"
-                },
-                "create_time": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "0"
-                },
-                "status": {
-                    "type": "integer"
-                },
-                "title": {
-                    "type": "string"
                 }
             }
         }

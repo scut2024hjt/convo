@@ -724,6 +724,66 @@
           "legendFormat": "{{kind}} / {{status}}"
         }
       ]
+    },
+    {
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 25,
+      "title": "Like state fallback / error rate",
+      "description": "Mysql fallback is labeled persisted, never realtime; error includes failed SQL fallback.",
+      "gridPos": {
+        "x": 0,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by(result)(rate(convo_like_read_fallback_total[5m]))",
+          "legendFormat": "{{result}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 26,
+      "title": "Legacy event rejection and like conflicts",
+      "description": "Legacy updates must never advance migrated like state; inspect DLQ for rejected events.",
+      "gridPos": {
+        "x": 12,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by(result)(rate(convo_vote_consumer_total{result=~\"legacy_rejected|like_conflict|dlq\"}[5m]))",
+          "legendFormat": "{{result}}"
+        }
+      ]
     }
   ],
   "tags": [

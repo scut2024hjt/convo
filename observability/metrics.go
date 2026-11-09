@@ -24,6 +24,7 @@ type registry struct {
 	httpCount          map[string]uint64
 	httpDuration       map[string]*histogram
 	vote               map[string]uint64
+	likeReadFallback   map[string]uint64
 	relay              map[string]uint64
 	consumer           map[string]uint64
 	endToEnd           *histogram
@@ -49,21 +50,22 @@ type registry struct {
 }
 
 var reg = registry{
-	httpCount:       make(map[string]uint64),
-	httpDuration:    make(map[string]*histogram),
-	vote:            make(map[string]uint64),
-	relay:           make(map[string]uint64),
-	consumer:        make(map[string]uint64),
-	endToEnd:        &histogram{Buckets: make([]uint64, 10)},
-	contentTasks:    make(map[string]uint64),
-	contentLatency:  make(map[string]*histogram),
-	contentSnapshot: make(map[string]float64),
-	contentOldest:   make(map[string]float64),
-	followTasks:     make(map[string]uint64),
-	followRows:      make(map[string]uint64),
-	followLatency:   make(map[string]*histogram),
-	followSnapshot:  make(map[string]float64),
-	followOldest:    make(map[string]float64),
+	httpCount:        make(map[string]uint64),
+	httpDuration:     make(map[string]*histogram),
+	vote:             make(map[string]uint64),
+	likeReadFallback: make(map[string]uint64),
+	relay:            make(map[string]uint64),
+	consumer:         make(map[string]uint64),
+	endToEnd:         &histogram{Buckets: make([]uint64, 10)},
+	contentTasks:     make(map[string]uint64),
+	contentLatency:   make(map[string]*histogram),
+	contentSnapshot:  make(map[string]float64),
+	contentOldest:    make(map[string]float64),
+	followTasks:      make(map[string]uint64),
+	followRows:       make(map[string]uint64),
+	followLatency:    make(map[string]*histogram),
+	followSnapshot:   make(map[string]float64),
+	followOldest:     make(map[string]float64),
 }
 
 var httpBounds = []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
@@ -113,7 +115,8 @@ func RecordHTTP(method, route string, status int, code int64, duration time.Dura
 		reg.httpDuration[key] = h
 	}
 	observe(h, duration.Seconds(), httpBounds)
-	if route == "/api/v1/vote" {
+	if (route == "/api/v1/vote" && method == "POST") ||
+		(route == "/api/v1/post/:id/like" && (method == "PUT" || method == "DELETE")) {
 		// Business codes are set by the central response helpers and also cover
 		// JWT and rate-limit middleware aborts (which may return HTTP 200).
 		result := "server_error"
@@ -148,12 +151,22 @@ func RecordRelay(result string) {
 
 func RecordConsumer(result string) {
 	switch result {
-	case "persisted", "duplicate", "same_version", "stale", "retry", "dlq":
+	case "persisted", "duplicate", "same_version", "stale", "retry", "dlq", "legacy_rejected", "like_conflict":
 	default:
 		return
 	}
 	reg.Lock()
 	reg.consumer[result]++
+	reg.Unlock()
+}
+
+// RecordLikeReadFallback counts only a fixed, bounded result label.
+func RecordLikeReadFallback(result string) {
+	if result != "mysql" && result != "error" {
+		return
+	}
+	reg.Lock()
+	reg.likeReadFallback[result]++
 	reg.Unlock()
 }
 
@@ -368,6 +381,7 @@ func renderMetrics() []byte {
 		{"convo_vote_requests_total", "Vote business outcomes.", reg.vote},
 		{"convo_vote_relay_publish_total", "Outbox events published to RabbitMQ.", reg.relay},
 		{"convo_vote_consumer_total", "Vote persistence and delivery outcomes.", reg.consumer},
+		{"convo_like_read_fallback_total", "Authenticated like reads served from persisted MySQL or failed.", reg.likeReadFallback},
 	} {
 		fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s counter\n", group.name, group.help, group.name)
 		results := make([]string, 0, len(group.counts))

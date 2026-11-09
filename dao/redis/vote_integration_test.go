@@ -27,14 +27,14 @@ func TestVoteScriptTransitionsAndConcurrency(t *testing.T) {
 	}
 	// The fourth post is initialized as expired.
 	client.ZAdd(getRedisKey(KeyPostTimeZSet), goredis.Z{
-		Score: float64(time.Now().Unix() - oneWeekInSeconds - 1), Member: posts[3],
+		Score: float64(time.Now().Unix() - 30*86400), Member: posts[3],
 	})
 	client.ZAdd(getRedisKey(KeyPostScoreZSet), goredis.Z{Score: 0, Member: posts[3]})
 	defer cleanupVoteTestData(posts)
 
 	post := strconv.FormatInt(posts[0], 10)
 	user := strconv.FormatInt(base+1000, 10)
-	directions := []int8{1, 1, -1, -1, 0, 0, -1, 1, 0}
+	directions := []int8{1, 1, 0, 0, 1, 1, 0, 1, 0}
 	wantChanged := []bool{true, false, true, false, true, false, true, true, true}
 	wantVersions := []int64{1, 1, 2, 2, 3, 3, 4, 5, 6}
 	for index, direction := range directions {
@@ -49,14 +49,17 @@ func TestVoteScriptTransitionsAndConcurrency(t *testing.T) {
 		}
 	}
 
+	if _, err := VoteForPost(user, post, -1, "invalid-negative", time.Now().Unix()); !errors.Is(err, ErrInvalidDirection) {
+		t.Fatalf("legacy -1 must be rejected: %v", err)
+	}
 	if _, err := VoteForPost(user, post, 2, "invalid", time.Now().Unix()); !errors.Is(err, ErrInvalidDirection) {
 		t.Fatalf("expected invalid direction, got %v", err)
 	}
 	if _, err := VoteForPost(user, strconv.FormatInt(base+9999, 10), 1, "missing", time.Now().Unix()); !errors.Is(err, ErrPostNotInitialized) {
 		t.Fatalf("expected missing post, got %v", err)
 	}
-	if _, err := VoteForPost(user, strconv.FormatInt(posts[3], 10), 1, "expired", time.Now().Unix()); !errors.Is(err, ErrVoteTimeExpired) {
-		t.Fatalf("expected expired vote, got %v", err)
+	if _, err := VoteForPost(user, strconv.FormatInt(posts[3], 10), 1, "historical", time.Now().Unix()); err != nil {
+		t.Fatalf("30-day historical like rejected: %v", err)
 	}
 
 	var sameUserChanges int64
@@ -95,8 +98,18 @@ func TestVoteScriptTransitionsAndConcurrency(t *testing.T) {
 		t.Fatalf("score=%v want=%v err=%v", finalScore, initialScore+100*scorePerVote, err)
 	}
 
-	wantEvents := map[string]int{post: 6, strconv.FormatInt(posts[1], 10): 1, strconv.FormatInt(posts[2], 10): 100}
+	wantEvents := map[string]int{post: 6, strconv.FormatInt(posts[1], 10): 1, strconv.FormatInt(posts[2], 10): 100, strconv.FormatInt(posts[3], 10): 1}
 	gotEvents := countVoteTestEvents(t, wantEvents)
+	allEvents, streamErr := client.XRange(getRedisKey(KeyVoteOutboxStream), "-", "+").Result()
+	if streamErr != nil {
+		t.Fatal(streamErr)
+	}
+	for _, e := range allEvents {
+		pid := fmt.Sprint(e.Values["post_id"])
+		if _, ok := wantEvents[pid]; ok && fmt.Sprint(e.Values["event_type"]) != "like.changed.v1" {
+			t.Fatalf("unexpected business event for post %s: %v", pid, e.Values["event_type"])
+		}
+	}
 	for postID, want := range wantEvents {
 		if gotEvents[postID] != want {
 			t.Fatalf("post %s produced %d events, expected %d", postID, gotEvents[postID], want)
